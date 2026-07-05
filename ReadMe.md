@@ -121,4 +121,6 @@ The split-screen user interface handles caching status presentation on the left 
 ### 5. Media-Rich Recipe View
 Includes dynamic asset loading for dish banners, micro-spec metadata tiles, structured instructions, and embedded video assistant guides Click below 👇:
 <br>
-<video src="images/Recipe.mp4" width="350" height="350" controls></video>
+ [![Watch the video](images/Recipe.png)](https://github.com/moreharsh/What_Should_I_Eat/blob/main/images/Recipe.mp4)
+
+<video src="images/Recipe.mp4" width="350" height="250" controls> </video>
