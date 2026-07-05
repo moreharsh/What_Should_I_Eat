@@ -95,3 +95,25 @@ Client-Side State Re-hydration
 The application architecture overrides static layout assumptions by executing proactive asynchronous validation hooks (useEffect) paired with target backend endpoints. Whenever a user moves backward from a detailed recipe page to the dashboard layout, the frontend forces a fast context reload to sync newly processed historical array structures cleanly from the remote Redis cache.
 
 ---
+
+## Application Preview:
+
+### 1. Interactive Home Page 
+User finds options to select the cuisine and dietary preferences:
+<img src="images/Cuisines.png" alt="Home Page" width="350px" height="350px"/>
+
+
+### 2. Interactive Culinary Dashboard For First Time Visit
+The user interface presents dynamic AI generation dishes matching selected cuisine and dietary restrictions:
+<img src="images/Dashboard_First.png" alt="Dashboard First" width="350px" height="350px"/>
+
+### 3. Interactive Culinary Dashboard
+The split-screen user interface handles caching status presentation on the left and dynamic AI generation tools on the right:
+<img src="images/Dashboard_Second.png" alt="Dashboard Second" width="350px" height="350px"/>
+
+### 4. Interactive Culinary Dashboard
+<img src="images/Dashboard.png" alt="Dashboard Second" width="350px" height="350px"/>
+
+### 5. Media-Rich Recipe View
+Includes dynamic asset loading for dish banners, micro-spec metadata tiles, structured instructions, and embedded video assistant guides:
+<img src="images/Recipe.mp4" alt="Recipe" width="350px" height="350px"/>
