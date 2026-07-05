@@ -20,6 +20,8 @@ export default Object.assign(function App() {
   // UI UX Polish States
   const [loading, setLoading] = useState(false);
 
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
   const toggleDietary = (diet) => {
     setSelectedDiet(prev => 
       prev.includes(diet) ? prev.filter(d => d !== diet) : [...prev, diet]
@@ -28,7 +30,7 @@ export default Object.assign(function App() {
 
   const refreshDashboardHistory = async (cuisineName) => {
     try {
-      const response = await fetch('http://localhost:8000/api/menu-dashboard', {
+      const response = await fetch(`${API_BASE_URL}/api/menu-dashboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: "harsh_123", cuisine: cuisineName })
@@ -66,7 +68,7 @@ export default Object.assign(function App() {
     setLoading(true);
     setCurrentView("menu_options");
     try {
-      const response = await fetch('http://localhost:8000/api/menu', {
+      const response = await fetch(`${API_BASE_URL}/api/menu`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -89,7 +91,7 @@ export default Object.assign(function App() {
     setLoading(true);
     setCurrentView("recipe");
     try {
-      const response = await fetch('http://localhost:8000/api/recipe', {
+      const response = await fetch(`${API_BASE_URL}/api/recipe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selected_dish: dishName, dietary_preferences: selectedDiet, cuisine: selectedCuisine })
