@@ -15,10 +15,7 @@ client = genai.Client()
 
 MODEL_POOL = [
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3-flash",
-    "gemini-3.5-flash"
+    "gemini-2.5-flash-lite"
 ]
 
 def generate_content_with_retry(contents: str, config: types.GenerateContentConfig, max_retries_per_model=2):
