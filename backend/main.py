@@ -216,6 +216,13 @@ async def get_menu_dashboard(request: MenuDashboardRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@app.get("/api/health")
+def check_backend_health():
+    print("Health Status checking")
+    return {
+        "Health_status_code": 200,
+        "Health_status": "Active"
+    }
 
 if __name__ == "__main__":
     import uvicorn
