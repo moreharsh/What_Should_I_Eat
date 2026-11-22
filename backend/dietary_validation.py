@@ -10,9 +10,9 @@ import re
 # Specific terms avoid rejecting e.g. coconut milk or plant-based cheese.
 _MEAT = r"\b(?:chicken|beef|pork|lamb|mutton|bacon|ham|turkey|duck|gelatin|lard|sausage|pepperoni)\b"
 _FISH = r"\b(?:fish|salmon|tuna|anchov(?:y|ies)|shrimp|prawn|crab|lobster|oyster|clam|mussel|sardine)\b"
-_EGG = r"\b(?:egg|eggs|mayonnaise)\b"
+_EGG = r"\b(?:egg|eggs|mayonnaise|honey)\b"
 _DAIRY = r"\b(?:butter|ghee|paneer|whey|casein|yogurt|yoghurt|cream|cheese|cow'?s milk|whole milk|skim milk|dairy milk)\b"
-_GLUTEN = r"\b(?:wheat|barley|rye|semolina|couscous|bulgur|seitan|all-purpose flour|plain flour|maida|farina|malt extract)\b"
+_GLUTEN = r"\b(?:wheat|barley|rye|semolina|couscous|bulgur|seitan|all-purpose flour|plain flour|maida|farina|malt extract|regular soy sauce|breadcrumbs)\b"
 _RULES = {
     "vegetarian": [_MEAT, _FISH],
     "vegan": [_MEAT, _FISH, _EGG, _DAIRY],
