@@ -325,6 +325,12 @@ export default Object.assign(function App() {
             </div>
           ) : (
             <div className="space-y-8">
+              {selectedDiet.length > 0 && (
+                <p role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  AI-generated recipes are screened for obvious ingredient conflicts, but dietary suitability,
+                  allergens, product labels, and cross-contact are not verified. Check all ingredients before cooking.
+                </p>
+              )}
               {/* Cover Card Banner */}
               <div 
                 className="relative h-64 w-full bg-cover bg-center rounded-2xl shadow-inner flex items-end p-6 overflow-hidden border border-slate-200"
