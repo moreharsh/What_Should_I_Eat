@@ -25,7 +25,7 @@ def recipe():
 class RecipeGraphIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_both_branches_start_concurrently_and_merge_state(self):
         chef_started = threading.Event()
-        media_started = asyncio.Event()
+        media_started = threading.Event()
         calls = {"chef": 0, "media": 0}
 
         def chef(state):
