@@ -13,7 +13,7 @@ export default Object.assign(function App() {
   
   // API Return Cache States
   const [menuOptions, setMenuOptions] = useState([]);
-  const [selectedDish, setSelectedDish] = useState('');
+  const [, setSelectedDish] = useState('');
   const [recipeRestrictions, setRecipeRestrictions] = useState([]);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [mediaLinks, setMediaLinks] = useState(null);
