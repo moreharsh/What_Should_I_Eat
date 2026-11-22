@@ -259,6 +259,8 @@ async def get_recipe_details(
                 return {
                     "recipe_details": recipe_content,
                     "media_links": media_result.get("media_links"),
+                    "is_saved": cache_key in redis_client.smembers(user_saved_key(profile["user_id"])),
+                    "is_tried": cache_key in redis_client.smembers(user_history_key(profile["user_id"])),
                 }
 
         try:
@@ -325,7 +327,9 @@ async def get_recipe_details(
 
         return {
             "recipe_details": parsed_fresh_recipe,
-            "media_links": media_links
+            "media_links": media_links,
+            "is_saved": cache_key in redis_client.smembers(user_saved_key(profile["user_id"])),
+            "is_tried": cache_key in redis_client.smembers(user_history_key(profile["user_id"])),
         }
 
     except HTTPException:
