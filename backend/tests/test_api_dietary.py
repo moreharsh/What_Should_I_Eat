@@ -54,6 +54,16 @@ class AgentState:
         self.__dict__.update(values)
 
 
+class DishOption(BaseModel):
+    dish_name: str
+    teaser: str
+    primary_protein: str
+
+
+class MenuSchema(BaseModel):
+    options: list[DishOption]
+
+
 class RecipeSchema(BaseModel):
     dish_name: str
     prep_time: str
@@ -87,6 +97,7 @@ def load_app():
     schemas = types.ModuleType("schemas")
     schemas.AgentState = AgentState
     schemas.RecipeSchema = RecipeSchema
+    schemas.MenuSchema = MenuSchema
     agents = types.ModuleType("agents")
     agents.chef_agent = lambda state: {}
     agents.media_agent = AsyncMock(return_value={"media_links": {"image_url": "", "youtube_embed_url": ""}})
@@ -163,6 +174,39 @@ class DietaryAPITests(unittest.TestCase):
             "dietary_preferences": ["vegan"],
         })
         self.assertEqual(result.status_code, 422)
+
+    def test_menu_returns_validated_items(self):
+        self.app.menu_graph.ainvoke.return_value = {"menu_options": [
+            {"dish_name": "Tacos", "teaser": "Fresh", "primary_protein": "Beans"}
+        ]}
+        response = self.client.post("/api/menu", json={
+            "cuisine": "Mexican", "dietary_restrictions": ["Vegan"],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["menu_options"][0]["dish_name"], "Tacos")
+        self.app.menu_graph.ainvoke.assert_awaited_once()
+
+    def test_menu_model_exception_is_safe_502(self):
+        self.app.menu_graph.ainvoke.side_effect = RuntimeError("private provider detail")
+        response = self.client.post("/api/menu", json={
+            "cuisine": "Italian", "dietary_restrictions": [],
+        })
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("private provider detail", response.text)
+
+    def test_menu_invalid_model_payload_is_safe_502(self):
+        self.app.menu_graph.ainvoke.return_value = {"menu_options": None}
+        response = self.client.post("/api/menu", json={
+            "cuisine": "Indian", "dietary_restrictions": [],
+        })
+        self.assertEqual(response.status_code, 502)
+
+    def test_menu_rejects_unsupported_diet_before_model(self):
+        response = self.client.post("/api/menu", json={
+            "cuisine": "Italian", "dietary_restrictions": ["unknown-diet"],
+        })
+        self.assertEqual(response.status_code, 422)
+        self.app.menu_graph.ainvoke.assert_not_awaited()
 
     def test_dashboard_filters_recipe_variants(self):
         self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)

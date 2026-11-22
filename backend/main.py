@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import http.client
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,12 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional
 
 from langgraph.graph import StateGraph, END
-from schemas import AgentState, RecipeSchema
+from schemas import AgentState, RecipeSchema, MenuSchema
 from agents import chef_agent, media_agent
 
 from data_layer import redis_client, log_interaction_to_databricks
 from recipe_cache import normalize_dietary_restrictions, recipe_cache_key, user_history_key
 from dietary_validation import incompatible_ingredients, SUPPORTED_RESTRICTIONS
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="What Should I Eat?")
 
@@ -96,11 +99,24 @@ async def get_menu_options(request: MenuRequest):
             dietary_preferences=normalize_dietary_restrictions(request.dietary_restrictions)
         )
 
-        result = menu_graph.invoke(initial_state)
-        return {"menu_options": result.get("menu_options", [])}
+        # The Chef node is synchronous; LangGraph handles it in an executor.
+        # Never run blocking Gemini requests directly in an async FastAPI route.
+        result = await menu_graph.ainvoke(initial_state)
+        options = result.get("menu_options") if isinstance(result, dict) else None
+        validated = MenuSchema.model_validate({"options": options})
+        if not validated.options:
+            raise ValueError("The Chef agent returned an empty menu")
+        return {"menu_options": validated.model_dump()["options"]}
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        # Log the exception and traceback to Render, not to the browser.
+        logger.exception(
+            "Menu generation failed: cuisine=%s, dietary_restrictions=%s",
+            request.cuisine, request.dietary_restrictions,
+        )
+        raise HTTPException(
+            status_code=502, detail="Menu generation is temporarily unavailable. Please retry."
+        ) from None
 
 
 @app.post("/api/recipe")

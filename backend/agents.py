@@ -9,6 +9,7 @@ from google.genai import types
 from google.genai.errors import ClientError
 from dotenv import load_dotenv
 from schemas import AgentState
+from menu_parsing import parse_menu_response
 
 load_dotenv()
 client = genai.Client()
@@ -89,9 +90,7 @@ def chef_agent(state: AgentState) -> dict:
         )
     )
     
-    clean_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-    parsed_data = json.loads(clean_text)
-    return {"menu_options": parsed_data["options"]}
+    return {"menu_options": parse_menu_response(response.text)}
 
 
 
