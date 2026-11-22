@@ -104,6 +104,11 @@ def load_app():
     data_layer = types.ModuleType("data_layer")
     data_layer.redis_client = redis
     data_layer.log_interaction_to_databricks = AsyncMock()
+    recipe_workflow = types.ModuleType("recipe_workflow")
+    recipe_workflow.build_recipe_graph = lambda *_: FakeStateGraph().compile()
+    recipe_workflow.run_media_safely = AsyncMock(
+        return_value={"media_links": {"image_url": "", "youtube_embed_url": ""}}
+    )
 
     stubs = {
         "langgraph": langgraph_module,
@@ -111,6 +116,7 @@ def load_app():
         "schemas": schemas,
         "agents": agents,
         "data_layer": data_layer,
+        "recipe_workflow": recipe_workflow,
     }
     root = Path(__file__).resolve().parents[1]
     spec = importlib.util.spec_from_file_location("dietary_test_main", root / "main.py")

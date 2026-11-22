@@ -12,6 +12,7 @@ from schemas import AgentState, RecipeSchema, MenuSchema
 from agents import chef_agent, media_agent
 
 from data_layer import redis_client, log_interaction_to_databricks
+from recipe_workflow import build_recipe_graph, run_media_safely
 from recipe_cache import normalize_dietary_restrictions, recipe_cache_key, user_history_key
 from dietary_validation import incompatible_ingredients, SUPPORTED_RESTRICTIONS
 
@@ -33,14 +34,7 @@ menu_workflow.set_entry_point("chef")
 menu_workflow.add_edge("chef", END)
 menu_graph = menu_workflow.compile()
 
-recipe_workflow = StateGraph(AgentState)
-recipe_workflow.add_node("chef", chef_agent)
-recipe_workflow.add_node("media", media_agent)
-recipe_workflow.set_entry_point("chef")
-recipe_workflow.set_entry_point("media")
-recipe_workflow.add_edge("chef", END)
-recipe_workflow.add_edge("media", END)
-recipe_graph = recipe_workflow.compile()
+recipe_graph = build_recipe_graph(chef_agent, media_agent)
 
 
 class MenuRequest(BaseModel):
@@ -147,7 +141,9 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
                 print(f"Invalid recipe cache entry; regenerating: {exc}")
                 redis_client.delete(cache_key)
             else:
-                media_result = await media_agent(AgentState(selected_dish=request.selected_dish))
+                media_result = await run_media_safely(
+                    AgentState(selected_dish=request.selected_dish), media_agent
+                )
                 redis_client.sadd(user_history_key("harsh_123"), cache_key)
                 background_tasks.add_task(
                     log_interaction_to_databricks,
@@ -167,11 +163,12 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             result = await recipe_graph.ainvoke(recipe_state)
             fresh_recipe = result.get("recipe_details")
             media_links = result.get("media_links")
-        except Exception as e:
-            # Optional Ollama fallback is tracked in issue #6. Do not invent
-            # placeholder instructions or silently bypass dietary constraints.
-            print(f"Recipe generation failed: {e}")
-            raise HTTPException(status_code=502, detail="Recipe generation unavailable; please retry") from e
+        except Exception:
+            # Optional Ollama fallback remains tracked in issue #6.
+            logger.exception("Recipe generation failed: chef branch unavailable")
+            raise HTTPException(
+                status_code=502, detail="Recipe generation unavailable; please retry"
+            ) from None
 
         if not fresh_recipe:
             raise HTTPException(status_code=502, detail="Recipe generation returned no recipe")
