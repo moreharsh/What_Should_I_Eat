@@ -2,17 +2,12 @@ name: Dietary cache regression tests
 
 on:
   pull_request:
-    paths:
-      - 'backend/recipe_cache.py'
-      - 'backend/dietary_validation.py'
-      - 'backend/main.py'
-      - 'backend/schemas.py'
-      - 'frontend/src/App.jsx'
-      - 'backend/tests/**'
-      - '.github/workflows/dietary-cache-tests.yml'
   push:
-    branches:
-      - fix/issue-2-dietary-cache-isolation
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   dietary-cache-tests:
