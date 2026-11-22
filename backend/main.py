@@ -98,7 +98,7 @@ async def get_menu_options(request: MenuRequest):
 
         result = menu_graph.invoke(initial_state)
         return {"menu_options": result.get("menu_options", [])}
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -110,10 +110,10 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         cuisine_context = request.cuisine.strip().lower() if request.cuisine else "unassigned"
         dietary_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
         cache_key = recipe_cache_key(request.selected_dish, cuisine_context, dietary_restrictions)
-        
+
         # Read directly from Redis Cloud using the uniform key structure
         cached_raw = redis_client.get(cache_key)
-        
+
         if cached_raw:
             try:
                 parsed_cache = json.loads(cached_raw)
@@ -178,27 +178,27 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
 
         recipe_metadata = {
             "dish_name": request.selected_dish,
-            "cuisine": cuisine_context, 
+            "cuisine": cuisine_context,
             "recipe_text": parsed_fresh_recipe,
             "dietary_restrictions": dietary_restrictions,
-            "prep_time": parsed_fresh_recipe.get("prep_time", "30 mins") if isinstance(parsed_fresh_recipe, dict) else "30 mins", 
+            "prep_time": parsed_fresh_recipe.get("prep_time", "30 mins") if isinstance(parsed_fresh_recipe, dict) else "30 mins",
             "difficulty": "Medium",
             "chef_pro_tip": parsed_fresh_recipe.get("chef_pro_tip", "Enjoy it hot!") if isinstance(parsed_fresh_recipe, dict) else "Enjoy it hot!"
         }
-        
+
         # Write using the exact same uniform cache_key variable
         redis_client.set(cache_key, json.dumps(recipe_metadata))
-        
+
         # Log to your personal Redis history set
         redis_client.sadd(user_history_key("harsh_123"), cache_key)
-        
+
         # 🚀 NEW: Turn your fresh, structured recipe object into a string payload for the data lake
         recipe_string_payload = json.dumps(parsed_fresh_recipe)
         # 🚀 FIX: Pass all 4 updated parameters to your background worker task
         background_tasks.add_task(
-            log_interaction_to_databricks, 
-            "harsh_123", 
-            request.selected_dish, 
+            log_interaction_to_databricks,
+            "harsh_123",
+            request.selected_dish,
             cuisine_context,        # Argument 3: actual cuisine context
             "DiscoveryFeed",        # Argument 4: tracking context
             recipe_string_payload   # Argument 5: full stringified recipe data!
@@ -208,7 +208,7 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             "recipe_details": parsed_fresh_recipe,
             "media_links": media_links
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -222,10 +222,10 @@ async def get_menu_dashboard(request: MenuDashboardRequest):
         history_key = user_history_key(request.user_id)
         cached_recipe_keys = redis_client.smembers(history_key)
         requested_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
-        
+
         previously_tried = []
         target_cuisine = request.cuisine.lower()
-        
+
         for cache_key in cached_recipe_keys:
             # Legacy unscoped entries must not bypass dietary constraints.
             if not cache_key.startswith("recipe:v2:"):
@@ -254,7 +254,7 @@ async def get_menu_dashboard(request: MenuDashboardRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.get("/api/health")
 def check_backend_health():
     print("Health Status checking")
