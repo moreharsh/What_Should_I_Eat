@@ -176,7 +176,7 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
                 detail="Generated recipe includes ingredients conflicting with dietary restrictions; try again.",
             )
 
-            recipe_metadata = {
+        recipe_metadata = {
             "dish_name": request.selected_dish,
             "cuisine": cuisine_context, 
             "recipe_text": parsed_fresh_recipe,
@@ -194,8 +194,6 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         
         # 🚀 NEW: Turn your fresh, structured recipe object into a string payload for the data lake
         recipe_string_payload = json.dumps(parsed_fresh_recipe)
-        cuisine_context = request.cuisine.lower() if request.cuisine else "indian"
-        
         # 🚀 FIX: Pass all 4 updated parameters to your background worker task
         background_tasks.add_task(
             log_interaction_to_databricks, 
