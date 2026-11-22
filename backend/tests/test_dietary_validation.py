@@ -23,6 +23,20 @@ class DietaryValidationTests(unittest.TestCase):
             [],
         )
 
+    def test_explicit_plant_based_substitutions_are_not_flagged(self):
+        ingredients = ["vegan cheese", "plant-based butter", "dairy-free yogurt", "coconut milk"]
+        self.assertEqual(
+            incompatible_ingredients({"ingredients": ingredients}, ["vegan", "dairy-free"]),
+            [],
+        )
+
+    def test_substitutions_do_not_hide_other_conflicts(self):
+        ingredients = ["vegan cheese with cow's milk", "plant-based butter and chicken"]
+        self.assertEqual(
+            incompatible_ingredients({"ingredients": ingredients}, ["vegan"]),
+            ingredients,
+        )
+
     def test_gluten_free_blocks_explicit_wheat(self):
         self.assertEqual(
             incompatible_ingredients({"ingredients": ["wheat flour", "tomato"]}, ["gluten-free"]),
