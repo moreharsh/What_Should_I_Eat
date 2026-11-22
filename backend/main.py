@@ -138,8 +138,10 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         if fresh_recipe:
             parsed_fresh_recipe = fresh_recipe
             if isinstance(fresh_recipe, str):
-                try: parsed_fresh_recipe = json.loads(fresh_recipe)
-                except Exception: pass
+                try:
+                    parsed_fresh_recipe = json.loads(fresh_recipe)
+                except Exception:
+                    pass
 
             recipe_metadata = {
                 "dish_name": request.selected_dish,
