@@ -24,3 +24,11 @@ def recipe_cache_key(dish_name, cuisine, restrictions=None):
 
 def user_history_key(user_id):
     return f"user:{user_id}:cooked:v2"
+
+
+def user_saved_key(user_id):
+    return f"user:{user_id}:saved:v2"
+
+
+def user_viewed_key(user_id):
+    return f"user:{user_id}:viewed:v2"
