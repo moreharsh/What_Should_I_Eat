@@ -13,11 +13,11 @@ import os
 import re
 import secrets
 
-from databricks import sql
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from data_layer import DB_HOST, DB_PATH, DB_TOKEN, redis_client
+import data_layer
+from data_layer import redis_client
 from recipe_cache import user_history_key, user_saved_key, user_viewed_key
 
 logger = logging.getLogger(__name__)
@@ -204,12 +204,14 @@ ALLOWED_TABLES = {
 async def databricks_events(table: str = "events", admin=Depends(require_admin)):
     if table not in ALLOWED_TABLES:
         raise HTTPException(status_code=422, detail="Unknown analytics table")
-    if not all([DB_HOST, DB_PATH, DB_TOKEN]):
+    if not all([data_layer.DB_HOST, data_layer.DB_PATH, data_layer.DB_TOKEN]):
         raise HTTPException(status_code=503, detail="Databricks is not configured")
 
     def read():
+        from databricks import sql
         with sql.connect(
-            server_hostname=DB_HOST, http_path=DB_PATH, access_token=DB_TOKEN
+            server_hostname=data_layer.DB_HOST, http_path=data_layer.DB_PATH,
+            access_token=data_layer.DB_TOKEN
         ) as conn:
             with conn.cursor() as cursor:
                 # SQL query is a fixed allowlist, never user-generated.
