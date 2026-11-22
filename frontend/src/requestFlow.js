@@ -1,4 +1,4 @@
-"""Request generation identity helper for overlapping frontend operations."""
+// Request generation identity helper for overlapping frontend operations.
 export function beginFlow(previous, cuisine = '') {
   previous?.controller?.abort();
   return {
