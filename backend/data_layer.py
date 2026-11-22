@@ -1,9 +1,12 @@
 import os
 import json
 import asyncio
+import logging
 from redis import Redis
 from databricks import sql
 from recipe_cache import recipe_cache_key
+
+logger = logging.getLogger(__name__)
 
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -35,44 +38,45 @@ async def log_interaction_to_databricks(user_id: str, dish_name: str, cuisine: s
         print("⚠️ Databricks credentials missing. Skipping cloud lakehouse logging.")
         return
 
+    # Constrain analytics fields without changing the actual recipe response.
+    # The SQL connector performs bound-parameter escaping; never quote or
+    # interpolate values into the INSERT statement.
+    values = (
+        str(user_id)[:128],
+        str(dish_name)[:256],
+        str(cuisine)[:128],
+        str(tracking_context)[:64],
+        str(recipe_details_json or "")[:100_000],
+    )
+
     def execute_insert():
         try:
-            escaped_recipe = recipe_details_json.replace("'", "''") if recipe_details_json else ""
-            
             with sql.connect(
-                server_hostname=DB_HOST, 
-                http_path=DB_PATH, 
-                access_token=DB_TOKEN  
+                server_hostname=DB_HOST,
+                http_path=DB_PATH,
+                access_token=DB_TOKEN,
             ) as conn:
                 with conn.cursor() as cursor:
-                    # 🚀 REMOVED THE RESTRICTED SET LINE
-
-                    # Clean, fresh table layout creation script
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS default.user_clicks (
-                            user_id STRING, 
-                            dish_name STRING, 
-                            cuisine STRING, 
+                            user_id STRING,
+                            dish_name STRING,
+                            cuisine STRING,
                             tracking_context STRING,
                             timestamp TIMESTAMP,
                             recipe_details STRING
                         ) USING DELTA
                     """)
-                    
-                    cursor.execute(f"""
-                        INSERT INTO default.user_clicks 
-                        VALUES (
-                            '{user_id}', 
-                            '{dish_name}', 
-                            '{cuisine}', 
-                            '{tracking_context}', 
-                            CURRENT_TIMESTAMP(), 
-                            '{escaped_recipe}'
-                        )
-                    """)
-            print(f"🚀 [DATABRICKS RETENTION]: Saved tracking layout for '{dish_name}' down to Delta Lake.")
-        except Exception as e:
-            print(f"❌ Databricks Background Logging Exception caught safely: {e}")
+                    cursor.execute("""
+                        INSERT INTO default.user_clicks
+                            (user_id, dish_name, cuisine, tracking_context,
+                             timestamp, recipe_details)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP(), ?)
+                    """, values)
+        except Exception:
+            # Analytics failure must never fail a successful recipe response;
+            # avoid logging raw dish text, credentials, SQL, or recipe content.
+            logger.exception("Databricks interaction logging unavailable")
 
     await asyncio.to_thread(execute_insert)
 
@@ -117,8 +121,7 @@ async def log_profile_event_to_databricks(
                         json.dumps(dietary_restrictions or []),
                     ))
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception(
+            logger.exception(
                 "Databricks profile event logging failed: event_type=%s", event_type
             )
 
