@@ -91,7 +91,11 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             if normalize_dietary_restrictions(parsed_cache.get("dietary_restrictions", [])) != dietary_restrictions:
                 raise HTTPException(status_code=502, detail="Cached recipe dietary mismatch")
             recipe_to_check = parsed_cache["recipe_text"]
-            if incompatible_ingredients(recipe_to_check, dietary_restrictions):
+            try:
+                cached_conflicts = incompatible_ingredients(recipe_to_check, dietary_restrictions)
+            except ValueError as exc:
+                raise HTTPException(status_code=502, detail="Invalid cached recipe ingredients") from exc
+            if cached_conflicts:
                 raise HTTPException(status_code=502, detail="Cached recipe conflicts with dietary restrictions")
             print(f"⚡ [PURE CACHE HIT]: Bypassing LLM Graph execution for '{request.selected_dish}'")
             recipe_content = cached_raw
@@ -149,6 +153,9 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
                     "instructions": ["Prepare locally via edge execution models."],
                     "chef_pro_tip": "Enjoy it hot!"
                 }
+
+        if not fresh_recipe:
+            raise HTTPException(status_code=502, detail="Recipe generation returned no recipe")
 
         if fresh_recipe:
             parsed_fresh_recipe = fresh_recipe
