@@ -70,6 +70,8 @@
     "elif",
     "lakehouse",
     "hincrby",
-    "unparseable"
+    "unparseable",
+    "anchov",
+    "maida"
   ]
 }

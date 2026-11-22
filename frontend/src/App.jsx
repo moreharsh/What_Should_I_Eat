@@ -14,6 +14,7 @@ function App() {
   // API Return Cache States
   const [menuOptions, setMenuOptions] = useState([]);
   const [, setSelectedDish] = useState('');
+  const [recipeRestrictions, setRecipeRestrictions] = useState([]);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [mediaLinks, setMediaLinks] = useState(null);
   
@@ -33,7 +34,7 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/menu-dashboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: "harsh_123", cuisine: cuisineName })
+        body: JSON.stringify({ user_id: "harsh_123", cuisine: cuisineName, dietary_restrictions: selectedDiet })
       });
       const data = await response.json();
       if (data.has_history) {
@@ -86,15 +87,17 @@ function App() {
   };
 
   // Phase 2: Call Backend to trigger concurrent Chef + Media assembly nodes
-  const fetchRecipe = async (dishName) => {
+  const fetchRecipe = async (dishName, restrictions = selectedDiet) => {
     setSelectedDish(dishName);
+    setRecipeRestrictions([...restrictions]);
+    setRecipeDetails(null);
     setLoading(true);
     setCurrentView("recipe");
     try {
       const response = await fetch(`${API_BASE_URL}/api/recipe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selected_dish: dishName, dietary_preferences: selectedDiet, cuisine: selectedCuisine })
+        body: JSON.stringify({ selected_dish: dishName, dietary_restrictions: restrictions, cuisine: selectedCuisine })
       });
       const data = await response.json();
       setRecipeDetails(data.recipe_details);
@@ -187,7 +190,7 @@ function App() {
                 {triedFavorites.map((dish, i) => (
                   <div
                     key={i}
-                    onClick={() => fetchRecipe(dish.dish_name)} // Directly bypasses step 2 selection!
+                    onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)} // Fetch the specific stored recipe variant
                     className="group bg-white p-4 rounded-xl border border-slate-100 shadow-2xs cursor-pointer hover:border-indigo-500 hover:shadow-sm transition-all flex justify-between items-start"
                   >
                     <div className="space-y-1 pr-4">
@@ -325,6 +328,12 @@ function App() {
             </div>
           ) : (
             <div className="space-y-8">
+              {recipeRestrictions.length > 0 && (
+                <p role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  Requested restrictions: {recipeRestrictions.join(', ')}. AI-generated recipes are screened for obvious ingredient conflicts, but dietary suitability,
+                  allergens, product labels, and cross-contact are not verified. Check all ingredients before cooking.
+                </p>
+              )}
               {/* Cover Card Banner */}
               <div 
                 className="relative h-64 w-full bg-cover bg-center rounded-2xl shadow-inner flex items-end p-6 overflow-hidden border border-slate-200"
