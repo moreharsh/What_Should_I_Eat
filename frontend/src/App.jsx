@@ -232,7 +232,7 @@ function App() {
       <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm space-y-5">
         <h1 className="text-3xl font-extrabold text-indigo-700">What Should I Eat?</h1>
         <h2 className="text-xl font-semibold">Choose a username</h2>
-        <p className="text-sm text-slate-600">Start a profile to keep your saved and tried recipes separate in this browser.</p>
+        <p className="text-sm text-slate-600">Enter a username to create or return to a recipe profile.</p>
         <form onSubmit={login} className="space-y-3">
           <label htmlFor="username" className="block text-sm font-semibold text-slate-700">Username</label>
           <input id="username" autoComplete="nickname" required minLength={3} maxLength={24}
@@ -245,7 +245,7 @@ function App() {
             {loggingIn ? 'Creating profile...' : 'Continue'}
           </button>
         </form>
-        <p className="text-xs text-amber-800">Demo profiles are browser-bound, not password-protected accounts. Clearing browser data or switching devices loses access to this profile. Don't store sensitive information.</p>
+        <p className="text-xs text-amber-800">Demo only: usernames have no passwords. Anyone who enters the same username can see its saved and tried recipes, including on another device. Don't store sensitive information.</p>
       </div>
     </div>
   );
