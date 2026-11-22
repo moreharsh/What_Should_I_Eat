@@ -162,6 +162,9 @@ class DietaryAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.client.headers.update({"Authorization": f"Bearer {response.json()['token']}"})
 
+    def recipe_values(self):
+        return {key: value for key, value in self.redis.values.items() if key.startswith("recipe:v2:")}
+
     def post_recipe(self, restrictions):
         return self.client.post("/api/recipe", json={
             "selected_dish": "Pasta",
@@ -178,11 +181,11 @@ class DietaryAPITests(unittest.TestCase):
         c = self.post_recipe([])
         self.assertEqual(c.status_code, 200, c.text)
         self.assertEqual(self.app.recipe_graph.ainvoke.await_count, 2)
-        self.assertEqual(len(self.redis.values), 2)
+        self.assertEqual(len(self.recipe_values()), 2)
 
     def test_corrupt_cache_is_evicted_and_regenerated(self):
         self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)
-        key = next(iter(self.redis.values))
+        key = next(iter(self.recipe_values()))
         self.redis.values[key] = "{corrupt json"
         result = self.post_recipe(["vegan"])
         self.assertEqual(result.status_code, 200, result.text)
@@ -196,7 +199,7 @@ class DietaryAPITests(unittest.TestCase):
         }
         result = self.post_recipe(["vegetarian"])
         self.assertEqual(result.status_code, 502)
-        self.assertFalse(self.redis.values)
+        self.assertFalse(self.recipe_values())
 
     def test_invalid_restrictions_are_rejected_before_invoking_model(self):
         result = self.post_recipe(["unknown-diet"])
