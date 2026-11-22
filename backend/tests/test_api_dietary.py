@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+from fastapi import Header, HTTPException
 from pydantic import BaseModel
 
 
@@ -27,6 +28,12 @@ class FakeRedis:
 
     def sadd(self, key, value):
         self.sets.setdefault(key, set()).add(value)
+
+    def srem(self, key, value):
+        self.sets.setdefault(key, set()).discard(value)
+
+    def setex(self, key, _seconds, value):
+        self.values[key] = value
 
     def smembers(self, key):
         return self.sets.get(key, set())
@@ -104,6 +111,24 @@ def load_app():
     data_layer = types.ModuleType("data_layer")
     data_layer.redis_client = redis
     data_layer.log_interaction_to_databricks = AsyncMock()
+    data_layer.log_profile_event_to_databricks = AsyncMock()
+    sessions = types.ModuleType("user_sessions")
+    def create_profile(username):
+        if len(username) < 3 or len(username) > 24:
+            raise ValueError("Invalid username")
+        profile = {"user_id": f"session-{username}", "username": username, "token": f"token-{username}"}
+        redis.setex(f"profile:session:{profile['token']}", 86400, json.dumps(profile))
+        return profile
+    def get_profile(authorization: str | None = Header(default=None)):
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing session")
+        record = redis.get(f"profile:session:{authorization[7:]}")
+        if not record:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        return json.loads(record)
+    sessions.create_profile = create_profile
+    sessions.get_profile = get_profile
+    sessions.revoke_profile = lambda token: redis.delete(f"profile:session:{token}")
     recipe_workflow = types.ModuleType("recipe_workflow")
     recipe_workflow.build_recipe_graph = lambda *_: FakeStateGraph().compile()
     recipe_workflow.run_media_safely = AsyncMock(
@@ -117,6 +142,7 @@ def load_app():
         "agents": agents,
         "data_layer": data_layer,
         "recipe_workflow": recipe_workflow,
+        "user_sessions": sessions,
     }
     root = Path(__file__).resolve().parents[1]
     spec = importlib.util.spec_from_file_location("dietary_test_main", root / "main.py")
@@ -132,6 +158,12 @@ def load_app():
 class DietaryAPITests(unittest.TestCase):
     def setUp(self):
         self.app, self.redis, self.client = load_app()
+        response = self.client.post("/api/session", json={"username": "test_user"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.client.headers.update({"Authorization": f"Bearer {response.json()['token']}"})
+
+    def recipe_values(self):
+        return {key: value for key, value in self.redis.values.items() if key.startswith("recipe:v2:")}
 
     def post_recipe(self, restrictions):
         return self.client.post("/api/recipe", json={
@@ -149,11 +181,11 @@ class DietaryAPITests(unittest.TestCase):
         c = self.post_recipe([])
         self.assertEqual(c.status_code, 200, c.text)
         self.assertEqual(self.app.recipe_graph.ainvoke.await_count, 2)
-        self.assertEqual(len(self.redis.values), 2)
+        self.assertEqual(len(self.recipe_values()), 2)
 
     def test_corrupt_cache_is_evicted_and_regenerated(self):
         self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)
-        key = next(iter(self.redis.values))
+        key = next(iter(self.recipe_values()))
         self.redis.values[key] = "{corrupt json"
         result = self.post_recipe(["vegan"])
         self.assertEqual(result.status_code, 200, result.text)
@@ -167,7 +199,7 @@ class DietaryAPITests(unittest.TestCase):
         }
         result = self.post_recipe(["vegetarian"])
         self.assertEqual(result.status_code, 502)
-        self.assertFalse(self.redis.values)
+        self.assertFalse(self.recipe_values())
 
     def test_invalid_restrictions_are_rejected_before_invoking_model(self):
         result = self.post_recipe(["unknown-diet"])
@@ -217,15 +249,74 @@ class DietaryAPITests(unittest.TestCase):
     def test_dashboard_filters_recipe_variants(self):
         self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)
         dashboard = self.client.post("/api/menu-dashboard", json={
-            "user_id": "harsh_123", "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
         })
         self.assertEqual(dashboard.status_code, 200, dashboard.text)
+        self.assertEqual(len(dashboard.json()["previously_tried"]), 0)
+        action = self.client.post("/api/recipe-action", json={
+            "selected_dish": "Pasta", "cuisine": "Italian",
+            "dietary_restrictions": ["vegan"], "action": "tried", "active": True,
+        })
+        self.assertEqual(action.status_code, 200, action.text)
+        dashboard = self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+        })
         self.assertEqual(len(dashboard.json()["previously_tried"]), 1)
         other = self.client.post("/api/menu-dashboard", json={
-            "user_id": "harsh_123", "cuisine": "Italian", "dietary_restrictions": [],
+            "cuisine": "Italian", "dietary_restrictions": [],
         })
         self.assertEqual(other.status_code, 200, other.text)
         self.assertEqual(len(other.json()["previously_tried"]), 0)
+
+    def test_profiles_are_isolated_and_recipe_open_is_not_tried(self):
+        response = self.post_recipe(["vegan"])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["is_saved"])
+        self.assertFalse(response.json()["is_tried"])
+        action = self.client.post("/api/recipe-action", json={
+            "selected_dish": "Pasta", "cuisine": "Italian",
+            "dietary_restrictions": ["vegan"], "action": "saved",
+        })
+        self.assertEqual(action.status_code, 200, action.text)
+        bob = self.client.post("/api/session", json={"username": "bob_user"})
+        self.assertEqual(bob.status_code, 200)
+        with self.client:
+            self.client.headers["Authorization"] = f"Bearer {bob.json()['token']}"
+            other = self.client.post("/api/menu-dashboard", json={
+                "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+            })
+            self.assertEqual(other.status_code, 200, other.text)
+            self.assertFalse(other.json()["saved_favorites"])
+            self.assertFalse(other.json()["previously_tried"])
+            self.assertEqual(self.post_recipe(["vegan"]).json()["is_saved"], False)
+
+    def test_actions_do_not_cross_recipe_variants(self):
+        self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)
+        saved = self.client.post("/api/recipe-action", json={
+            "selected_dish": "Pasta", "cuisine": "Italian",
+            "dietary_restrictions": ["vegan"], "action": "saved",
+        })
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(self.post_recipe([]).json()["is_saved"], False)
+
+    def test_unmark_actions_and_session_authorization(self):
+        self.assertEqual(self.post_recipe([]).status_code, 200)
+        payload = {
+            "selected_dish": "Pasta", "cuisine": "Italian",
+            "dietary_restrictions": [], "action": "tried",
+        }
+        self.assertEqual(self.client.post("/api/recipe-action", json=payload).status_code, 200)
+        self.assertTrue(self.post_recipe([]).json()["is_tried"])
+        payload["active"] = False
+        self.assertEqual(self.client.post("/api/recipe-action", json=payload).status_code, 200)
+        self.assertFalse(self.post_recipe([]).json()["is_tried"])
+        self.client.headers.pop("Authorization")
+        self.assertEqual(self.client.post("/api/recipe", json={
+            "selected_dish": "Pasta", "cuisine": "Italian",
+        }).status_code, 401)
+        self.assertEqual(self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian",
+        }).status_code, 401)
 
 
 if __name__ == "__main__":

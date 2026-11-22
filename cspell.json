@@ -72,6 +72,8 @@
     "hincrby",
     "unparseable",
     "anchov",
-    "maida"
+    "maida",
+    "srem",
+    "setex"
   ]
 }

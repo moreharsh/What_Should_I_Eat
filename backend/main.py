@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import http.client
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional
@@ -11,9 +11,13 @@ from langgraph.graph import StateGraph, END
 from schemas import AgentState, RecipeSchema, MenuSchema
 from agents import chef_agent, media_agent
 
-from data_layer import redis_client, log_interaction_to_databricks
+from data_layer import redis_client, log_interaction_to_databricks, log_profile_event_to_databricks
 from recipe_workflow import build_recipe_graph, run_media_safely
-from recipe_cache import normalize_dietary_restrictions, recipe_cache_key, user_history_key
+from recipe_cache import (
+    normalize_dietary_restrictions, recipe_cache_key, user_history_key,
+    user_saved_key, user_viewed_key,
+)
+from user_sessions import create_profile, get_profile, revoke_profile
 from dietary_validation import incompatible_ingredients, SUPPORTED_RESTRICTIONS
 
 logger = logging.getLogger(__name__)
@@ -70,7 +74,6 @@ class RecipeRequest(BaseModel):
 
 class MenuDashboardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    user_id: str
     cuisine: str
     dietary_restrictions: List[str] = Field(default_factory=list)
 
@@ -83,6 +86,101 @@ class MenuDashboardRequest(BaseModel):
         return normalized
 
 
+
+
+class ProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str
+
+
+class RecipeActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selected_dish: str
+    cuisine: str
+    dietary_restrictions: List[str] = Field(default_factory=list)
+    action: str
+    active: bool = True
+
+    @field_validator("dietary_restrictions")
+    @classmethod
+    def validate_restrictions(cls, values):
+        normalized = normalize_dietary_restrictions(values)
+        if set(normalized) - SUPPORTED_RESTRICTIONS:
+            raise ValueError("Unsupported dietary restriction")
+        return normalized
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, value):
+        if value not in {"saved", "tried"}:
+            raise ValueError("Expected 'saved' or 'tried'")
+        return value
+
+
+@app.post("/api/session")
+async def start_session(request: ProfileRequest, background_tasks: BackgroundTasks):
+    try:
+        profile = create_profile(request.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    background_tasks.add_task(
+        log_profile_event_to_databricks, profile["user_id"],
+        profile["username"], "profile_created",
+    )
+    return profile
+
+
+@app.get("/api/session")
+async def read_session(profile=Depends(get_profile)):
+    return profile
+
+
+@app.delete("/api/session")
+async def end_session(
+    authorization: str = Header(default=""), profile=Depends(get_profile)
+):
+    revoke_profile(authorization.removeprefix("Bearer "))
+    return {"ok": True}
+
+
+@app.post("/api/recipe-action")
+async def update_recipe_action(
+    request: RecipeActionRequest, background_tasks: BackgroundTasks,
+    profile=Depends(get_profile),
+):
+    cuisine = request.cuisine.strip().lower()
+    restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
+    cache_key = recipe_cache_key(request.selected_dish, cuisine, restrictions)
+    cached = redis_client.get(cache_key)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Recipe not found. Open it first")
+    try:
+        record = json.loads(cached)
+        if (
+            not isinstance(record, dict)
+            or record.get("cuisine") != cuisine
+            or normalize_dietary_restrictions(record.get("dietary_restrictions", [])) != restrictions
+            or not record.get("recipe_text")
+        ):
+            raise ValueError("Cached recipe does not match request")
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=404, detail="Recipe variant not found") from None
+    history_key = (
+        user_saved_key(profile["user_id"])
+        if request.action == "saved" else user_history_key(profile["user_id"])
+    )
+    if request.active:
+        redis_client.sadd(history_key, cache_key)
+    else:
+        redis_client.srem(history_key, cache_key)
+    event_type = request.action if request.active else (
+        "unsaved" if request.action == "saved" else "untried"
+    )
+    background_tasks.add_task(
+        log_profile_event_to_databricks, profile["user_id"], profile["username"],
+        event_type, request.selected_dish, cuisine, restrictions,
+    )
+    return {"action": request.action, "active": request.active}
 
 
 @app.post("/api/menu")
@@ -114,12 +212,23 @@ async def get_menu_options(request: MenuRequest):
 
 
 @app.post("/api/recipe")
-async def get_recipe_details(request: RecipeRequest, background_tasks: BackgroundTasks):
+async def get_recipe_details(
+    request: RecipeRequest, background_tasks: BackgroundTasks,
+    profile=Depends(get_profile),
+):
     try:
         # 🚀 1. STANDARDIZE THE CACHE KEY FIRST (Fixes Cache Miss Bug)
         cuisine_context = request.cuisine.strip().lower() if request.cuisine else "unassigned"
         dietary_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
         cache_key = recipe_cache_key(request.selected_dish, cuisine_context, dietary_restrictions)
+
+        def record_view():
+            # Record only successful recipe responses, not failed attempts.
+            redis_client.sadd(user_viewed_key(profile["user_id"]), cache_key)
+            background_tasks.add_task(
+                log_profile_event_to_databricks, profile["user_id"], profile["username"],
+                "viewed", request.selected_dish, cuisine_context, dietary_restrictions,
+            )
 
         # Read directly from Redis Cloud using the uniform key structure
         cached_raw = redis_client.get(cache_key)
@@ -144,14 +253,16 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
                 media_result = await run_media_safely(
                     AgentState(selected_dish=request.selected_dish), media_agent
                 )
-                redis_client.sadd(user_history_key("harsh_123"), cache_key)
                 background_tasks.add_task(
                     log_interaction_to_databricks,
-                    "harsh_123", request.selected_dish, cuisine_context, "CachedCuisine", "",
+                    profile["user_id"], request.selected_dish, cuisine_context, "CachedCuisine", "",
                 )
+                record_view()
                 return {
                     "recipe_details": recipe_content,
                     "media_links": media_result.get("media_links"),
+                    "is_saved": cache_key in redis_client.smembers(user_saved_key(profile["user_id"])),
+                    "is_tried": cache_key in redis_client.smembers(user_history_key(profile["user_id"])),
                 }
 
         try:
@@ -202,24 +313,26 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         # Write using the exact same uniform cache_key variable
         redis_client.set(cache_key, json.dumps(recipe_metadata))
 
-        # Log to your personal Redis history set
-        redis_client.sadd(user_history_key("harsh_123"), cache_key)
+        # Do not automatically mark a viewed recipe as saved or cooked.
 
         # 🚀 NEW: Turn your fresh, structured recipe object into a string payload for the data lake
         recipe_string_payload = json.dumps(parsed_fresh_recipe)
         # 🚀 FIX: Pass all 4 updated parameters to your background worker task
         background_tasks.add_task(
             log_interaction_to_databricks,
-            "harsh_123",
+            profile["user_id"],
             request.selected_dish,
             cuisine_context,        # Argument 3: actual cuisine context
             "DiscoveryFeed",        # Argument 4: tracking context
             recipe_string_payload   # Argument 5: full stringified recipe data!
         )
 
+        record_view()
         return {
             "recipe_details": parsed_fresh_recipe,
-            "media_links": media_links
+            "media_links": media_links,
+            "is_saved": cache_key in redis_client.smembers(user_saved_key(profile["user_id"])),
+            "is_tried": cache_key in redis_client.smembers(user_history_key(profile["user_id"])),
         }
 
     except HTTPException:
@@ -230,16 +343,19 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
 
 
 @app.post("/api/menu-dashboard")
-async def get_menu_dashboard(request: MenuDashboardRequest):
+async def get_menu_dashboard(request: MenuDashboardRequest, profile=Depends(get_profile)):
     try:
-        history_key = user_history_key(request.user_id)
+        history_key = user_history_key(profile["user_id"])
+        saved_key = user_saved_key(profile["user_id"])
         cached_recipe_keys = redis_client.smembers(history_key)
+        saved_recipe_keys = redis_client.smembers(saved_key)
         requested_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
 
         previously_tried = []
+        saved_favorites = []
         target_cuisine = request.cuisine.lower()
 
-        for cache_key in cached_recipe_keys:
+        for cache_key in sorted(cached_recipe_keys | saved_recipe_keys):
             # Legacy unscoped entries must not bypass dietary constraints.
             if not cache_key.startswith("recipe:v2:"):
                 continue
@@ -251,19 +367,26 @@ async def get_menu_dashboard(request: MenuDashboardRequest):
                         cached_cuisine = recipe_data.get("cuisine", "").lower()
                         cached_restrictions = normalize_dietary_restrictions(recipe_data.get("dietary_restrictions", []))
                         if cached_cuisine == target_cuisine and cached_restrictions == requested_restrictions:
-                            previously_tried.append({
+                            item = {
                                 "dish_name": recipe_data.get("dish_name", ""),
                                 "dietary_restrictions": cached_restrictions,
                                 "prep_time": recipe_data.get("prep_time", "30 mins"),
                                 "difficulty": recipe_data.get("difficulty", "Medium"),
-                                "teaser": recipe_data.get("chef_pro_tip", "A signature tried-and-true favorite!")[:85] + "..."
-                            })
+                                "teaser": recipe_data.get("chef_pro_tip", "A favorite recipe!")[:85] + "...",
+                                "saved": cache_key in saved_recipe_keys,
+                                "tried": cache_key in cached_recipe_keys,
+                            }
+                            if cache_key in cached_recipe_keys:
+                                previously_tried.append(item)
+                            if cache_key in saved_recipe_keys:
+                                saved_favorites.append(item)
                 except Exception as e:
                     print(f"Skipping unparseable cache key {cache_key}: {e}")
 
         return {
-            "has_history": len(previously_tried) > 0,
-            "previously_tried": previously_tried
+            "has_history": bool(previously_tried or saved_favorites),
+            "previously_tried": sorted(previously_tried, key=lambda item: item["dish_name"]),
+            "saved_favorites": sorted(saved_favorites, key=lambda item: item["dish_name"])
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

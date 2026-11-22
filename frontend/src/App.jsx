@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Utensils, ArrowLeft, Clock, Users, Flame, ChevronRight, Play, CheckCircle2, Sparkles } from 'lucide-react';
 
 const CUISINES = ['Indian', 'Mexican', 'Italian', 'Japanese', 'Mediterranean', 'Thai'];
@@ -10,6 +10,15 @@ function App() {
   const [selectedCuisine, setSelectedCuisine] = useState('');
   const [selectedDiet, setSelectedDiet] = useState([]);
   const [triedFavorites, setTriedFavorites] = useState([]);
+  const [savedFavorites, setSavedFavorites] = useState([]);
+  const [isSaved, setIsSaved] = useState(false);
+  const [isTried, setIsTried] = useState(false);
+  const [token, setToken] = useState(() => localStorage.getItem('recipe_profile_token') || '');
+  const [profile, setProfile] = useState(null);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [loginError, setLoginError] = useState(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(Boolean(localStorage.getItem('recipe_profile_token')));
   
   // API Return Cache States
   const [menuOptions, setMenuOptions] = useState([]);
@@ -22,15 +31,19 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [menuError, setMenuError] = useState(null);
   const [recipeError, setRecipeError] = useState(null);
+  const [actionError, setActionError] = useState(null);
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   // Fetch and validate API responses before handing data to React components.
   // 4xx/5xx response bodies often contain { detail: ... }, not menu_options.
-  const fetchJson = async (path, payload) => {
+  const fetchJson = async (path, payload, anonymous = false) => {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && !anonymous ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(payload),
     });
     let data;
@@ -46,6 +59,73 @@ function App() {
     return data;
   };
 
+  useEffect(() => {
+    const stored = localStorage.getItem('recipe_profile_token');
+    if (!stored) return;
+    fetch(`${API_BASE_URL}/api/session`, {
+      headers: { Authorization: `Bearer ${stored}` },
+    }).then(async response => {
+      if (!response.ok) throw new Error('Session expired');
+      return response.json();
+    }).then(setProfile).catch(() => {
+      localStorage.removeItem('recipe_profile_token');
+      setToken('');
+    }).finally(() => setCheckingSession(false));
+  }, [API_BASE_URL]);
+
+  const login = async (event) => {
+    event.preventDefault();
+    setLoginError(null);
+    setLoggingIn(true);
+    try {
+      const data = await fetchJson('/api/session', { username: usernameInput.trim() }, true);
+      if (!data.token || !data.username || !data.user_id) throw new Error('Invalid profile response');
+      localStorage.setItem('recipe_profile_token', data.token);
+      setToken(data.token);
+      setProfile({ username: data.username, user_id: data.user_id });
+      setCurrentView('cuisines');
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Could not start a profile.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const logout = async () => {
+    if (token) {
+      fetch(`${API_BASE_URL}/api/session`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+    localStorage.removeItem('recipe_profile_token');
+    setToken('');
+    setProfile(null);
+    setUsernameInput('');
+    setSelectedCuisine('');
+    setMenuOptions([]);
+    setTriedFavorites([]);
+    setSavedFavorites([]);
+    setRecipeDetails(null);
+    setMediaLinks(null);
+    setCurrentView('cuisines');
+  };
+
+  const updateRecipeAction = async (action, active) => {
+    setActionError(null);
+    try {
+      await fetchJson('/api/recipe-action', {
+        selected_dish: selectedDish,
+        cuisine: selectedCuisine,
+        dietary_restrictions: recipeRestrictions,
+        action, active,
+      });
+      if (action === 'saved') setIsSaved(active);
+      else setIsTried(active);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Failed to update recipe.');
+    }
+  };
+
   const toggleDietary = (diet) => {
     setSelectedDiet(prev => 
       prev.includes(diet) ? prev.filter(d => d !== diet) : [...prev, diet]
@@ -55,16 +135,18 @@ function App() {
   const refreshDashboardHistory = async (cuisineName) => {
     try {
       const data = await fetchJson('/api/menu-dashboard', {
-        user_id: 'harsh_123',
         cuisine: cuisineName,
         dietary_restrictions: selectedDiet,
       });
       const favorites = Array.isArray(data.previously_tried) ? data.previously_tried : [];
+      const saved = Array.isArray(data.saved_favorites) ? data.saved_favorites : [];
       setTriedFavorites(favorites);
-      return favorites.length > 0;
+      setSavedFavorites(saved);
+      return favorites.length > 0 || saved.length > 0;
     } catch (err) {
       console.error('Error refreshing dashboard state:', err);
       setTriedFavorites([]);
+      setSavedFavorites([]);
       // A history failure should not prevent fresh menu discovery.
       return false;
     }
@@ -114,6 +196,9 @@ function App() {
     setRecipeRestrictions([...restrictions]);
     setRecipeDetails(null);
     setRecipeError(null);
+    setActionError(null);
+    setIsSaved(false);
+    setIsTried(false);
     setLoading(true);
     setCurrentView('recipe');
     try {
@@ -128,6 +213,8 @@ function App() {
       }
       setRecipeDetails(data.recipe_details);
       setMediaLinks(data.media_links);
+      setIsSaved(Boolean(data.is_saved));
+      setIsTried(Boolean(data.is_tried));
     } catch (err) {
       console.error('Error fetching recipe details:', err);
       setRecipeError(err instanceof Error ? err.message : 'Unable to load this recipe.');
@@ -135,6 +222,33 @@ function App() {
       setLoading(false);
     }
   };
+
+  if (checkingSession) return (
+    <div className="mx-auto max-w-lg p-10 text-center text-slate-600">Restoring your profile...</div>
+  );
+
+  if (!profile) return (
+    <div className="mx-auto max-w-md px-4 py-16">
+      <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm space-y-5">
+        <h1 className="text-3xl font-extrabold text-indigo-700">What Should I Eat?</h1>
+        <h2 className="text-xl font-semibold">Choose a username</h2>
+        <p className="text-sm text-slate-600">Start a profile to keep your saved and tried recipes separate in this browser.</p>
+        <form onSubmit={login} className="space-y-3">
+          <label htmlFor="username" className="block text-sm font-semibold text-slate-700">Username</label>
+          <input id="username" autoComplete="nickname" required minLength={3} maxLength={24}
+            pattern="[A-Za-z0-9_]{3,24}" value={usernameInput}
+            onChange={event => setUsernameInput(event.target.value)}
+            placeholder="e.g. home_chef" className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-indigo-500" />
+          {loginError && <p role="alert" className="text-sm text-red-600">{loginError}</p>}
+          <button type="submit" disabled={loggingIn}
+            className="w-full rounded-xl bg-indigo-600 p-3 font-semibold text-white disabled:opacity-60">
+            {loggingIn ? 'Creating profile...' : 'Continue'}
+          </button>
+        </form>
+        <p className="text-xs text-amber-800">Demo profiles are browser-bound, not password-protected accounts. Clearing browser data or switching devices loses access to this profile. Don't store sensitive information.</p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -144,6 +258,10 @@ function App() {
         <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
           What Should I Eat?
         </h1>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-xs font-semibold text-slate-600">@{profile.username}</span>
+          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">Sign out</button>
+        </div>
       </header>
 
       {/* VIEW 1: SELECT CUISINE & PREFERENCES */}
@@ -204,13 +322,26 @@ function App() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {savedFavorites.length > 0 && (
+              <div className="md:col-span-2 rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
+                <h3 className="mb-3 text-sm font-bold text-emerald-800">Saved recipes</h3>
+                <div className="flex flex-wrap gap-2">
+                  {savedFavorites.map((dish, index) => (
+                    <button key={index} onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)}
+                      className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold hover:border-emerald-500">
+                      {dish.dish_name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* Left Column: Premium History Cards */}
             <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 space-y-4 shadow-xs">
               <div>
                 <h3 className="text-sm font-black text-indigo-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <CheckCircle2 className="h-4 w-4 text-indigo-500" /> Tried & Trusted Favorites
+                  <CheckCircle2 className="h-4 w-4 text-indigo-500" /> Marked as Tried
                 </h3>
-                <p className="text-[11px] text-slate-400 mt-0.5">Loaded instantly from cloud storage memory caches</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Only recipes you explicitly marked as tried</p>
               </div>
               
               <div className="space-y-3">
@@ -294,7 +425,7 @@ function App() {
       {currentView === "menu_options" && (
         <div className="space-y-6 animate-fadeIn">
           <button 
-            onClick={() => setCurrentView(triedFavorites.length > 0 ? "dashboard" : "cuisines")} 
+            onClick={() => setCurrentView(triedFavorites.length > 0 || savedFavorites.length > 0 ? "dashboard" : "cuisines")}
             className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" /> Back
@@ -376,6 +507,17 @@ function App() {
                   allergens, product labels, and cross-contact are not verified. Check all ingredients before cooking.
                 </p>
               )}
+              {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{actionError}</p>}
+              <div className="flex flex-wrap gap-3">
+                <button type="button" onClick={() => updateRecipeAction('saved', !isSaved)}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isSaved ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  {isSaved ? 'Saved ✓ · Unsave' : '☆ Save recipe'}
+                </button>
+                <button type="button" onClick={() => updateRecipeAction('tried', !isTried)}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isTried ? 'border-indigo-600 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  {isTried ? 'Tried ✓ · Unmark' : '✓ Mark as tried'}
+                </button>
+              </div>
               {/* Cover Card Banner */}
               <div 
                 className="relative h-64 w-full bg-cover bg-center rounded-2xl shadow-inner flex items-end p-6 overflow-hidden border border-slate-200"
