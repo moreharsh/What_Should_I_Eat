@@ -3,7 +3,7 @@ import json
 import http.client
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
 from langgraph.graph import StateGraph, END
@@ -11,6 +11,7 @@ from schemas import AgentState
 from agents import chef_agent, media_agent
 
 from data_layer import redis_client, log_interaction_to_databricks
+from recipe_cache import normalize_dietary_restrictions, recipe_cache_key, user_history_key
 
 app = FastAPI(title="What Should I Eat?")
 
@@ -39,17 +40,21 @@ recipe_graph = recipe_workflow.compile()
 
 
 class MenuRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     cuisine: str
-    dietary_restrictions: Optional[List[str]] = []
+    dietary_restrictions: List[str] = Field(default_factory=list)
 
 class RecipeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     selected_dish: str
-    dietary_restrictions: Optional[List[str]] = []
+    dietary_restrictions: List[str] = Field(default_factory=list)
     cuisine: Optional[str] = "unassigned"
 
 class MenuDashboardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     user_id: str
     cuisine: str
+    dietary_restrictions: List[str] = Field(default_factory=list)
 
 
 @app.post("/api/menu")
@@ -57,7 +62,7 @@ async def get_menu_options(request: MenuRequest):
     try:
         initial_state = AgentState(
             cuisine=request.cuisine,
-            dietary_preferences=request.dietary_restrictions
+            dietary_preferences=normalize_dietary_restrictions(request.dietary_restrictions)
         )
 
         result = menu_graph.invoke(initial_state)
@@ -71,9 +76,9 @@ async def get_menu_options(request: MenuRequest):
 async def get_recipe_details(request: RecipeRequest, background_tasks: BackgroundTasks):
     try:
         # 🚀 1. STANDARDIZE THE CACHE KEY FIRST (Fixes Cache Miss Bug)
-        clean_name = request.selected_dish.lower().replace(' ', '_').replace('(', '').replace(')', '')
-        cache_key = f"recipe:{clean_name}"
-        cuisine_context = request.cuisine.lower() if request.cuisine else "indian"
+        cuisine_context = request.cuisine.strip().lower() if request.cuisine else "unassigned"
+        dietary_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
+        cache_key = recipe_cache_key(request.selected_dish, cuisine_context, dietary_restrictions)
         
         # Read directly from Redis Cloud using the uniform key structure
         cached_raw = redis_client.get(cache_key)
@@ -93,6 +98,7 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             
             recipe_state = AgentState(selected_dish=request.selected_dish)
             media_result = await media_agent(recipe_state)
+            redis_client.sadd(user_history_key("harsh_123"), cache_key)
             
             cuisine_context = request.cuisine.lower() if request.cuisine else "indian"
             
@@ -113,7 +119,7 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         try:
             recipe_state = AgentState(
                 selected_dish=request.selected_dish,
-                dietary_preferences=request.dietary_restrictions
+                dietary_preferences=normalize_dietary_restrictions(request.dietary_restrictions)
             )
             result = await recipe_graph.ainvoke(recipe_state)
             fresh_recipe = result.get("recipe_details")
@@ -145,6 +151,7 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
                 "dish_name": request.selected_dish,
                 "cuisine": cuisine_context, 
                 "recipe_text": parsed_fresh_recipe,
+                "dietary_restrictions": dietary_restrictions,
                 "prep_time": parsed_fresh_recipe.get("prep_time", "30 mins") if isinstance(parsed_fresh_recipe, dict) else "30 mins", 
                 "difficulty": "Medium",
                 "chef_pro_tip": parsed_fresh_recipe.get("chef_pro_tip", "Enjoy it hot!") if isinstance(parsed_fresh_recipe, dict) else "Enjoy it hot!"
@@ -154,7 +161,7 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             redis_client.set(cache_key, json.dumps(recipe_metadata))
             
             # Log to your personal Redis history set
-            redis_client.sadd(f"user:harsh_123:cooked", request.selected_dish)
+            redis_client.sadd(user_history_key("harsh_123"), cache_key)
             
             # 🚀 NEW: Turn your fresh, structured recipe object into a string payload for the data lake
             recipe_string_payload = json.dumps(parsed_fresh_recipe)
@@ -183,25 +190,28 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
 @app.post("/api/menu-dashboard")
 async def get_menu_dashboard(request: MenuDashboardRequest):
     try:
-        user_history_key = f"user:{request.user_id}:cooked"
-        cooked_dishes = redis_client.smembers(user_history_key)
+        history_key = user_history_key(request.user_id)
+        cached_recipe_keys = redis_client.smembers(history_key)
+        requested_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
         
         previously_tried = []
         target_cuisine = request.cuisine.lower()
         
-        for dish_name in cooked_dishes:
-            clean_name = dish_name.lower().replace(' ', '_').replace('(', '').replace(')', '')
-            cache_key = f"recipe:{clean_name}"
-            
+        for cache_key in cached_recipe_keys:
+            # Legacy unscoped entries must not bypass dietary constraints.
+            if not cache_key.startswith("recipe:v2:"):
+                continue
             cached_raw = redis_client.get(cache_key)
             if cached_raw:
                 try:
                     recipe_data = json.loads(cached_raw)
                     if isinstance(recipe_data, dict):
                         cached_cuisine = recipe_data.get("cuisine", "").lower()
-                        if cached_cuisine == target_cuisine:
+                        cached_restrictions = normalize_dietary_restrictions(recipe_data.get("dietary_restrictions", []))
+                        if cached_cuisine == target_cuisine and cached_restrictions == requested_restrictions:
                             previously_tried.append({
-                                "dish_name": dish_name,
+                                "dish_name": recipe_data.get("dish_name", ""),
+                                "dietary_restrictions": cached_restrictions,
                                 "prep_time": recipe_data.get("prep_time", "30 mins"),
                                 "difficulty": recipe_data.get("difficulty", "Medium"),
                                 "teaser": recipe_data.get("chef_pro_tip", "A signature tried-and-true favorite!")[:85] + "..."
