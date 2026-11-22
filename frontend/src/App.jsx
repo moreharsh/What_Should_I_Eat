@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { postJson } from './api.js';
+import { beginFlow, isActiveFlow } from './requestFlow.js';
 import { Utensils, ArrowLeft, Clock, Users, Flame, ChevronRight, Play, CheckCircle2, Sparkles } from 'lucide-react';
 
 const CUISINES = ['Indian', 'Mexican', 'Italian', 'Japanese', 'Mediterranean', 'Thai'];
@@ -39,21 +40,15 @@ function App() {
   const recipeFlowRef = useRef({ id: 0, controller: null });
 
   const startMenuFlow = (cuisine) => {
-    menuFlowRef.current.controller?.abort();
     recipeFlowRef.current.controller?.abort();
     recipeFlowRef.current = { id: recipeFlowRef.current.id + 1, controller: null };
-    const flow = {
-      id: menuFlowRef.current.id + 1,
-      controller: new AbortController(),
-      pending: true,
-      cuisine,
-    };
+    const flow = beginFlow(menuFlowRef.current, cuisine);
     menuFlowRef.current = flow;
     return flow;
   };
 
-  const isCurrentMenuFlow = flow => menuFlowRef.current.id === flow.id;
-  const isCurrentRecipeFlow = flow => recipeFlowRef.current.id === flow.id;
+  const isCurrentMenuFlow = flow => isActiveFlow(menuFlowRef.current, flow);
+  const isCurrentRecipeFlow = flow => isActiveFlow(recipeFlowRef.current, flow);
 
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -229,7 +224,7 @@ function App() {
     menuFlowRef.current.controller?.abort();
     menuFlowRef.current = { id: menuFlowRef.current.id + 1, controller: null, pending: false, cuisine: '' };
     recipeFlowRef.current.controller?.abort();
-    const flow = { id: recipeFlowRef.current.id + 1, controller: new AbortController() };
+    const flow = beginFlow(recipeFlowRef.current);
     recipeFlowRef.current = flow;
     setSelectedDish(dishName);
     setRecipeRestrictions([...restrictions]);
