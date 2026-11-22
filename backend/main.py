@@ -196,8 +196,11 @@ async def get_menu_options(request: MenuRequest):
         result = await menu_graph.ainvoke(initial_state)
         options = result.get("menu_options") if isinstance(result, dict) else None
         validated = MenuSchema.model_validate({"options": options})
-        if not validated.options:
-            raise ValueError("The Chef agent returned an empty menu")
+        if len(validated.options) != 5:
+            raise ValueError("The Chef agent did not return five menu options")
+        names = [item.dish_name.strip().casefold() for item in validated.options]
+        if len(set(names)) != 5:
+            raise ValueError("The Chef agent returned duplicate menu options")
         return {"menu_options": validated.model_dump()["options"]}
 
     except Exception:
@@ -338,8 +341,8 @@ async def get_recipe_details(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"💥 EXCEPTION IN RECIPE ENDPOINT: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Unexpected recipe endpoint failure")
+        raise HTTPException(status_code=500, detail="Recipe service unavailable; please retry") from None
 
 
 @app.post("/api/menu-dashboard")
