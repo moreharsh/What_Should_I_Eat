@@ -425,7 +425,7 @@ function App() {
       {currentView === "menu_options" && (
         <div className="space-y-6 animate-fadeIn">
           <button 
-            onClick={() => setCurrentView(triedFavorites.length > 0 ? "dashboard" : "cuisines")} 
+            onClick={() => setCurrentView(triedFavorites.length > 0 || savedFavorites.length > 0 ? "dashboard" : "cuisines")} 
             className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" /> Back
