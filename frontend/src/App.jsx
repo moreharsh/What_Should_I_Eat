@@ -11,6 +11,7 @@ function App() {
   const [selectedDiet, setSelectedDiet] = useState([]);
   const [triedFavorites, setTriedFavorites] = useState([]);
   const [savedFavorites, setSavedFavorites] = useState([]);
+  const [viewedRecipes, setViewedRecipes] = useState([]);
   const [isSaved, setIsSaved] = useState(false);
   const [isTried, setIsTried] = useState(false);
   const [token, setToken] = useState(() => localStorage.getItem('recipe_profile_token') || '');
@@ -105,6 +106,7 @@ function App() {
     setMenuOptions([]);
     setTriedFavorites([]);
     setSavedFavorites([]);
+    setViewedRecipes([]);
     setRecipeDetails(null);
     setMediaLinks(null);
     setCurrentView('cuisines');
@@ -140,13 +142,16 @@ function App() {
       });
       const favorites = Array.isArray(data.previously_tried) ? data.previously_tried : [];
       const saved = Array.isArray(data.saved_favorites) ? data.saved_favorites : [];
+      const viewed = Array.isArray(data.viewed_recipes) ? data.viewed_recipes : [];
       setTriedFavorites(favorites);
       setSavedFavorites(saved);
-      return favorites.length > 0 || saved.length > 0;
+      setViewedRecipes(viewed);
+      return favorites.length > 0 || saved.length > 0 || viewed.length > 0;
     } catch (err) {
       console.error('Error refreshing dashboard state:', err);
       setTriedFavorites([]);
       setSavedFavorites([]);
+      setViewedRecipes([]);
       // A history failure should not prevent fresh menu discovery.
       return false;
     }
@@ -322,6 +327,21 @@ function App() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {viewedRecipes.length > 0 && (
+              <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <h3 className="mb-1 text-sm font-bold text-slate-800">Viewed recipes</h3>
+                <p className="mb-3 text-xs text-slate-500">Recipes you opened, whether or not you saved or cooked them.</p>
+                <div className="flex flex-wrap gap-2">
+                  {viewedRecipes.map((dish, index) => (
+                    <button key={index}
+                      onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:border-indigo-500">
+                      {dish.dish_name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {savedFavorites.length > 0 && (
               <div className="md:col-span-2 rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
                 <h3 className="mb-3 text-sm font-bold text-emerald-800">Saved recipes</h3>
@@ -425,7 +445,7 @@ function App() {
       {currentView === "menu_options" && (
         <div className="space-y-6 animate-fadeIn">
           <button 
-            onClick={() => setCurrentView(triedFavorites.length > 0 || savedFavorites.length > 0 ? "dashboard" : "cuisines")}
+            onClick={() => setCurrentView(triedFavorites.length > 0 || savedFavorites.length > 0 || viewedRecipes.length > 0 ? "dashboard" : "cuisines")}
             className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" /> Back
