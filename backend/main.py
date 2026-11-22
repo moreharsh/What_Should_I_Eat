@@ -222,12 +222,13 @@ async def get_recipe_details(
         dietary_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
         cache_key = recipe_cache_key(request.selected_dish, cuisine_context, dietary_restrictions)
 
-        # Viewing a recipe is a distinct event, never a save or a cooked action.
-        redis_client.sadd(user_viewed_key(profile["user_id"]), cache_key)
-        background_tasks.add_task(
-            log_profile_event_to_databricks, profile["user_id"], profile["username"],
-            "viewed", request.selected_dish, cuisine_context, dietary_restrictions,
-        )
+        def record_view():
+            # Record only successful recipe responses, not failed attempts.
+            redis_client.sadd(user_viewed_key(profile["user_id"]), cache_key)
+            background_tasks.add_task(
+                log_profile_event_to_databricks, profile["user_id"], profile["username"],
+                "viewed", request.selected_dish, cuisine_context, dietary_restrictions,
+            )
 
         # Read directly from Redis Cloud using the uniform key structure
         cached_raw = redis_client.get(cache_key)
@@ -256,6 +257,7 @@ async def get_recipe_details(
                     log_interaction_to_databricks,
                     profile["user_id"], request.selected_dish, cuisine_context, "CachedCuisine", "",
                 )
+                record_view()
                 return {
                     "recipe_details": recipe_content,
                     "media_links": media_result.get("media_links"),
@@ -325,6 +327,7 @@ async def get_recipe_details(
             recipe_string_payload   # Argument 5: full stringified recipe data!
         )
 
+        record_view()
         return {
             "recipe_details": parsed_fresh_recipe,
             "media_links": media_links,
