@@ -31,6 +31,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [menuError, setMenuError] = useState(null);
   const [recipeError, setRecipeError] = useState(null);
+  const [actionError, setActionError] = useState(null);
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -110,6 +111,7 @@ function App() {
   };
 
   const updateRecipeAction = async (action, active) => {
+    setActionError(null);
     try {
       await fetchJson('/api/recipe-action', {
         selected_dish: selectedDish,
@@ -120,7 +122,7 @@ function App() {
       if (action === 'saved') setIsSaved(active);
       else setIsTried(active);
     } catch (error) {
-      setRecipeError(error instanceof Error ? error.message : 'Failed to update recipe.');
+      setActionError(error instanceof Error ? error.message : 'Failed to update recipe.');
     }
   };
 
@@ -194,6 +196,7 @@ function App() {
     setRecipeRestrictions([...restrictions]);
     setRecipeDetails(null);
     setRecipeError(null);
+    setActionError(null);
     setIsSaved(false);
     setIsTried(false);
     setLoading(true);
@@ -504,6 +507,7 @@ function App() {
                   allergens, product labels, and cross-contact are not verified. Check all ingredients before cooking.
                 </p>
               )}
+              {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{actionError}</p>}
               <div className="flex flex-wrap gap-3">
                 <button type="button" onClick={() => updateRecipeAction('saved', !isSaved)}
                   className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isSaved ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
