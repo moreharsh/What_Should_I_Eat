@@ -12,7 +12,9 @@ from schemas import AgentState
 from menu_parsing import parse_menu_response
 
 load_dotenv()
-client = genai.Client()
+# google-genai 3.x defaults to v1, which rejects developer/system instructions
+# used by the Chef agent. Explicitly select the compatible Gemini API.
+client = genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
 
 MODEL_POOL = [
     "gemini-2.5-flash",
