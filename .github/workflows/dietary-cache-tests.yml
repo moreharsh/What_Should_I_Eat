@@ -1,0 +1,25 @@
+name: Dietary cache regression tests
+
+on:
+  pull_request:
+    paths:
+      - 'backend/recipe_cache.py'
+      - 'backend/dietary_validation.py'
+      - 'backend/main.py'
+      - 'backend/tests/**'
+      - '.github/workflows/dietary-cache-tests.yml'
+  push:
+    branches:
+      - fix/issue-2-dietary-cache-isolation
+
+jobs:
+  dietary-cache-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated cache and ingredient screening tests
+        working-directory: backend
+        run: python -m unittest discover -s tests -v
