@@ -1,4 +1,4 @@
-"""Shared JSON POST helper: safe errors, bounded waits and abort handling."""
+// Shared JSON POST helper: safe errors, bounded waits and abort handling.
 export async function postJson(url, payload, { token = '', signal, timeoutMs = 100000 } = {}) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
