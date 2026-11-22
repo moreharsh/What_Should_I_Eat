@@ -1,22 +1,45 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, TypedDict
 
 class DishOption(BaseModel):
-    dish_name: str
-    teaser: str
-    primary_protein: str
+    dish_name: str = Field(min_length=1, max_length=120)
+    teaser: str = Field(min_length=1, max_length=500)
+    primary_protein: str = Field(min_length=1, max_length=120)
+
+    @field_validator("dish_name", "teaser", "primary_protein")
+    @classmethod
+    def reject_blank_text(cls, value):
+        if not value.strip():
+            raise ValueError("Dish field cannot be blank")
+        return value.strip()
+
 
 class MenuSchema(BaseModel):
-    options: List[DishOption]
+    options: List[DishOption] = Field(min_length=1, max_length=5)
+
 
 class RecipeSchema(BaseModel):
-    dish_name: str
-    prep_time: str
-    cook_time: str
-    servings: str
-    ingredients: List[str]
-    instructions: List[str]
-    chef_pro_tip: str
+    dish_name: str = Field(min_length=1, max_length=120)
+    prep_time: str = Field(min_length=1, max_length=150)
+    cook_time: str = Field(min_length=1, max_length=150)
+    servings: str = Field(min_length=1, max_length=80)
+    ingredients: List[str] = Field(min_length=1, max_length=100)
+    instructions: List[str] = Field(min_length=1, max_length=100)
+    chef_pro_tip: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("dish_name", "prep_time", "cook_time", "servings", "chef_pro_tip")
+    @classmethod
+    def reject_blank_text(cls, value):
+        if not value.strip():
+            raise ValueError("Recipe field cannot be blank")
+        return value.strip()
+
+    @field_validator("ingredients", "instructions")
+    @classmethod
+    def reject_blank_steps(cls, values):
+        if any(not value.strip() or len(value) > 1000 for value in values):
+            raise ValueError("Recipe list contains blank or oversized entries")
+        return [value.strip() for value in values]
 
 
 class AgentState(BaseModel):
