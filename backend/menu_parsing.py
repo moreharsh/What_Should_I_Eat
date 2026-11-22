@@ -11,6 +11,9 @@ def parse_menu_response(text: str) -> list[dict]:
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Gemini returned no menu text")
 
+    if len(text) > 20_000:
+        raise ValueError("Gemini menu text exceeded the maximum size")
+
     value = text.strip()
     if value.startswith("```"):
         lines = value.splitlines()
@@ -27,6 +30,9 @@ def parse_menu_response(text: str) -> list[dict]:
     except ValidationError as exc:
         raise ValueError("Gemini menu response did not match the expected schema") from exc
 
-    if not menu.options:
-        raise ValueError("Gemini returned an empty list of dishes")
+    if len(menu.options) != 5:
+        raise ValueError("Gemini must return exactly five dishes")
+    names = [dish.dish_name.strip().casefold() for dish in menu.options]
+    if len(set(names)) != 5:
+        raise ValueError("Gemini returned duplicate dishes")
     return [dish.model_dump() for dish in menu.options]
