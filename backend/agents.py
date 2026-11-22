@@ -10,6 +10,7 @@ from google.genai.errors import ClientError
 from dotenv import load_dotenv
 from schemas import AgentState
 from menu_parsing import parse_menu_response
+from recipe_parsing import parse_recipe_response
 
 load_dotenv()
 # google-genai 3.x defaults to v1, which rejects developer/system instructions
@@ -73,8 +74,7 @@ def chef_agent(state: AgentState) -> dict:
             )
         )
         
-        clean_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-        return {"recipe_details": json.loads(clean_text)}
+        return {"recipe_details": parse_recipe_response(response.text)}
 
 
     # --- PHASE 1 FLOW: Generate the initial 5 options ---
