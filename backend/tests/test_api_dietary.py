@@ -268,6 +268,42 @@ class DietaryAPITests(unittest.TestCase):
         self.assertEqual(other.status_code, 200, other.text)
         self.assertEqual(len(other.json()["previously_tried"]), 0)
 
+    def test_viewed_only_recipe_appears_in_dashboard_after_returning_to_profile(self):
+        first_login = self.client.post("/api/session", json={"username": "returning_cook"})
+        self.assertEqual(first_login.status_code, 200)
+        self.client.headers["Authorization"] = f"Bearer {first_login.json()['token']}"
+        recipe_response = self.post_recipe(["vegan"])
+        self.assertEqual(recipe_response.status_code, 200, recipe_response.text)
+        first_dashboard = self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+        })
+        self.assertEqual(first_dashboard.status_code, 200)
+        self.assertEqual(len(first_dashboard.json()["viewed_recipes"]), 1)
+        self.assertEqual(first_dashboard.json()["saved_favorites"], [])
+        self.assertEqual(first_dashboard.json()["previously_tried"], [])
+
+        self.assertEqual(self.client.delete("/api/session").status_code, 200)
+        second_login = self.client.post("/api/session", json={"username": "returning_cook"})
+        self.assertEqual(second_login.status_code, 200)
+        self.client.headers["Authorization"] = f"Bearer {second_login.json()['token']}"
+        second_dashboard = self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+        })
+        self.assertEqual(second_dashboard.status_code, 200)
+        self.assertTrue(second_dashboard.json()["has_history"])
+        self.assertEqual(second_dashboard.json()["viewed_recipes"][0]["dish_name"], "Pasta")
+
+    def test_viewed_history_is_not_exposed_to_another_user(self):
+        self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)
+        response = self.client.post("/api/session", json={"username": "other_user"})
+        self.assertEqual(response.status_code, 200)
+        self.client.headers["Authorization"] = f"Bearer {response.json()['token']}"
+        dashboard = self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+        })
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(dashboard.json()["viewed_recipes"], [])
+
     def test_profiles_are_isolated_and_recipe_open_is_not_tried(self):
         response = self.post_recipe(["vegan"])
         self.assertEqual(response.status_code, 200, response.text)
