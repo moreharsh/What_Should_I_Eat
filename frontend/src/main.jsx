@@ -6,6 +6,6 @@ import AdminDashboard from './AdminDashboard.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    {window.location.pathname.replace(/\\/$/, '') === '/admin' ? <AdminDashboard /> : <App />}
+    {['/admin', '/admin/'].includes(window.location.pathname) ? <AdminDashboard /> : <App />}
   </StrictMode>,
 )
