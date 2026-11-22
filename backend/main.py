@@ -3,16 +3,16 @@ import json
 import http.client
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional
 
 from langgraph.graph import StateGraph, END
-from schemas import AgentState
+from schemas import AgentState, RecipeSchema
 from agents import chef_agent, media_agent
 
 from data_layer import redis_client, log_interaction_to_databricks
 from recipe_cache import normalize_dietary_restrictions, recipe_cache_key, user_history_key
-from dietary_validation import incompatible_ingredients
+from dietary_validation import incompatible_ingredients, SUPPORTED_RESTRICTIONS
 
 app = FastAPI(title="What Should I Eat?")
 
@@ -45,17 +45,47 @@ class MenuRequest(BaseModel):
     cuisine: str
     dietary_restrictions: List[str] = Field(default_factory=list)
 
+    @field_validator("dietary_restrictions")
+    @classmethod
+    def validate_restrictions(cls, values):
+        normalized = normalize_dietary_restrictions(values)
+        if set(normalized) - SUPPORTED_RESTRICTIONS:
+            raise ValueError("Unsupported dietary restriction")
+        return normalized
+
+
+
 class RecipeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     selected_dish: str
     dietary_restrictions: List[str] = Field(default_factory=list)
     cuisine: Optional[str] = "unassigned"
 
+    @field_validator("dietary_restrictions")
+    @classmethod
+    def validate_restrictions(cls, values):
+        normalized = normalize_dietary_restrictions(values)
+        if set(normalized) - SUPPORTED_RESTRICTIONS:
+            raise ValueError("Unsupported dietary restriction")
+        return normalized
+
+
+
 class MenuDashboardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str
     cuisine: str
     dietary_restrictions: List[str] = Field(default_factory=list)
+
+    @field_validator("dietary_restrictions")
+    @classmethod
+    def validate_restrictions(cls, values):
+        normalized = normalize_dietary_restrictions(values)
+        if set(normalized) - SUPPORTED_RESTRICTIONS:
+            raise ValueError("Unsupported dietary restriction")
+        return normalized
+
+
 
 
 @app.post("/api/menu")
@@ -85,52 +115,36 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         cached_raw = redis_client.get(cache_key)
         
         if cached_raw:
-            parsed_cache = json.loads(cached_raw)
-            if not isinstance(parsed_cache, dict) or "recipe_text" not in parsed_cache:
-                raise HTTPException(status_code=502, detail="Invalid cached recipe format")
-            if normalize_dietary_restrictions(parsed_cache.get("dietary_restrictions", [])) != dietary_restrictions:
-                raise HTTPException(status_code=502, detail="Cached recipe dietary mismatch")
-            recipe_to_check = parsed_cache["recipe_text"]
             try:
-                cached_conflicts = incompatible_ingredients(recipe_to_check, dietary_restrictions)
-            except ValueError as exc:
-                raise HTTPException(status_code=502, detail="Invalid cached recipe ingredients") from exc
-            if cached_conflicts:
-                raise HTTPException(status_code=502, detail="Cached recipe conflicts with dietary restrictions")
-            print(f"⚡ [PURE CACHE HIT]: Bypassing LLM Graph execution for '{request.selected_dish}'")
-            recipe_content = cached_raw
-            
-            try:
-                parsed_cache = json.loads(cached_raw) if isinstance(cached_raw, str) else cached_raw
-                if isinstance(parsed_cache, dict) and "recipe_text" in parsed_cache:
-                    recipe_content = parsed_cache["recipe_text"]
-                    if isinstance(recipe_content, str):
-                        recipe_content = json.loads(recipe_content)
-            except Exception:
-                pass 
-            
-            recipe_state = AgentState(selected_dish=request.selected_dish)
-            media_result = await media_agent(recipe_state)
-            redis_client.sadd(user_history_key("harsh_123"), cache_key)
-            
-            cuisine_context = request.cuisine.lower() if request.cuisine else "indian"
-            
-            background_tasks.add_task(
-                log_interaction_to_databricks, 
-                "harsh_123", 
-                request.selected_dish, 
-                cuisine_context,
-                "CachedCuisine",
-                ""
-            )
-            
-            return {
-                "recipe_details": recipe_content,
-                "media_links": media_result.get("media_links")
-            }
+                parsed_cache = json.loads(cached_raw)
+                if not isinstance(parsed_cache, dict):
+                    raise ValueError("Invalid cache record")
+                if parsed_cache.get("cuisine") != cuisine_context:
+                    raise ValueError("Cached cuisine mismatch")
+                if normalize_dietary_restrictions(parsed_cache.get("dietary_restrictions", [])) != dietary_restrictions:
+                    raise ValueError("Cached dietary restrictions mismatch")
+                recipe_content = RecipeSchema.model_validate(parsed_cache["recipe_text"]).model_dump()
+                if incompatible_ingredients(recipe_content, dietary_restrictions):
+                    raise ValueError("Cached recipe has conflicting ingredients")
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                # Never serve an unverified cache entry, or repeatedly fail on it.
+                print(f"Invalid recipe cache entry; regenerating: {exc}")
+                redis_client.delete(cache_key)
+            else:
+                media_result = await media_agent(AgentState(selected_dish=request.selected_dish))
+                redis_client.sadd(user_history_key("harsh_123"), cache_key)
+                background_tasks.add_task(
+                    log_interaction_to_databricks,
+                    "harsh_123", request.selected_dish, cuisine_context, "CachedCuisine", "",
+                )
+                return {
+                    "recipe_details": recipe_content,
+                    "media_links": media_result.get("media_links"),
+                }
 
         try:
             recipe_state = AgentState(
+                cuisine=cuisine_context,
                 selected_dish=request.selected_dish,
                 dietary_preferences=normalize_dietary_restrictions(request.dietary_restrictions)
             )
@@ -138,72 +152,59 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             fresh_recipe = result.get("recipe_details")
             media_links = result.get("media_links")
         except Exception as e:
-            print(f"⚠️ Cloud Recipe Agent Mesh Failed: {e}. Routing to local engine...")
-            from main import call_local_ollama_recipe_fallback_sync # Assumes defined helper
-            local_raw_json = call_local_ollama_recipe_fallback_sync(request.selected_dish, cuisine_context, request.dietary_restrictions)
-            
-            fresh_recipe = json.loads(local_raw_json) if local_raw_json else None
-            media_links = {"image_url": "", "youtube_embed_url": ""}
-            
-            if not fresh_recipe:
-                fresh_recipe = {
-                    "dish_name": request.selected_dish,
-                    "prep_time": "25 mins",
-                    "ingredients": ["Main authentic base ingredients"],
-                    "instructions": ["Prepare locally via edge execution models."],
-                    "chef_pro_tip": "Enjoy it hot!"
-                }
+            # Optional Ollama fallback is tracked in issue #6. Do not invent
+            # placeholder instructions or silently bypass dietary constraints.
+            print(f"Recipe generation failed: {e}")
+            raise HTTPException(status_code=502, detail="Recipe generation unavailable; please retry") from e
 
         if not fresh_recipe:
             raise HTTPException(status_code=502, detail="Recipe generation returned no recipe")
 
-        if fresh_recipe:
-            parsed_fresh_recipe = fresh_recipe
-            if isinstance(fresh_recipe, str):
-                try: parsed_fresh_recipe = json.loads(fresh_recipe)
-                except Exception: pass
-
-            if not isinstance(parsed_fresh_recipe, dict):
-                raise HTTPException(status_code=502, detail="Invalid generated recipe")
+        if isinstance(fresh_recipe, str):
             try:
-                conflicts = incompatible_ingredients(parsed_fresh_recipe, dietary_restrictions)
-            except ValueError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            if conflicts:
-                raise HTTPException(
-                    status_code=502,
-                    detail="Generated recipe includes ingredients conflicting with dietary restrictions; try again.",
-                )
+                fresh_recipe = json.loads(fresh_recipe)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=502, detail="Recipe generation returned invalid JSON") from exc
+        try:
+            parsed_fresh_recipe = RecipeSchema.model_validate(fresh_recipe).model_dump()
+            conflicts = incompatible_ingredients(parsed_fresh_recipe, dietary_restrictions)
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Recipe generation returned invalid ingredients") from exc
+        if conflicts:
+            raise HTTPException(
+                status_code=502,
+                detail="Generated recipe includes ingredients conflicting with dietary restrictions; try again.",
+            )
 
             recipe_metadata = {
-                "dish_name": request.selected_dish,
-                "cuisine": cuisine_context, 
-                "recipe_text": parsed_fresh_recipe,
-                "dietary_restrictions": dietary_restrictions,
-                "prep_time": parsed_fresh_recipe.get("prep_time", "30 mins") if isinstance(parsed_fresh_recipe, dict) else "30 mins", 
-                "difficulty": "Medium",
-                "chef_pro_tip": parsed_fresh_recipe.get("chef_pro_tip", "Enjoy it hot!") if isinstance(parsed_fresh_recipe, dict) else "Enjoy it hot!"
-            }
-            
-            # Write using the exact same uniform cache_key variable
-            redis_client.set(cache_key, json.dumps(recipe_metadata))
-            
-            # Log to your personal Redis history set
-            redis_client.sadd(user_history_key("harsh_123"), cache_key)
-            
-            # 🚀 NEW: Turn your fresh, structured recipe object into a string payload for the data lake
-            recipe_string_payload = json.dumps(parsed_fresh_recipe)
-            cuisine_context = request.cuisine.lower() if request.cuisine else "indian"
-            
-            # 🚀 FIX: Pass all 4 updated parameters to your background worker task
-            background_tasks.add_task(
-                log_interaction_to_databricks, 
-                "harsh_123", 
-                request.selected_dish, 
-                cuisine_context,        # Argument 3: actual cuisine context
-                "DiscoveryFeed",        # Argument 4: tracking context
-                recipe_string_payload   # Argument 5: full stringified recipe data!
-            )
+            "dish_name": request.selected_dish,
+            "cuisine": cuisine_context, 
+            "recipe_text": parsed_fresh_recipe,
+            "dietary_restrictions": dietary_restrictions,
+            "prep_time": parsed_fresh_recipe.get("prep_time", "30 mins") if isinstance(parsed_fresh_recipe, dict) else "30 mins", 
+            "difficulty": "Medium",
+            "chef_pro_tip": parsed_fresh_recipe.get("chef_pro_tip", "Enjoy it hot!") if isinstance(parsed_fresh_recipe, dict) else "Enjoy it hot!"
+        }
+        
+        # Write using the exact same uniform cache_key variable
+        redis_client.set(cache_key, json.dumps(recipe_metadata))
+        
+        # Log to your personal Redis history set
+        redis_client.sadd(user_history_key("harsh_123"), cache_key)
+        
+        # 🚀 NEW: Turn your fresh, structured recipe object into a string payload for the data lake
+        recipe_string_payload = json.dumps(parsed_fresh_recipe)
+        cuisine_context = request.cuisine.lower() if request.cuisine else "indian"
+        
+        # 🚀 FIX: Pass all 4 updated parameters to your background worker task
+        background_tasks.add_task(
+            log_interaction_to_databricks, 
+            "harsh_123", 
+            request.selected_dish, 
+            cuisine_context,        # Argument 3: actual cuisine context
+            "DiscoveryFeed",        # Argument 4: tracking context
+            recipe_string_payload   # Argument 5: full stringified recipe data!
+        )
 
         return {
             "recipe_details": parsed_fresh_recipe,
