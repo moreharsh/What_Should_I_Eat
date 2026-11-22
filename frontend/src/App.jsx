@@ -4,7 +4,7 @@ import { Utensils, ArrowLeft, Clock, Users, Flame, ChevronRight, Play, CheckCirc
 const CUISINES = ['Indian', 'Mexican', 'Italian', 'Japanese', 'Mediterranean', 'Thai'];
 const DIETARY_OPTIONS = ['Vegetarian', 'Vegan', 'Gluten-Free', 'Pescatarian', 'Dairy-Free'];
 
-export default Object.assign(function App() {
+function App() {
   // 🚀 FIXED: Standardized view management states
   const [currentView, setCurrentView] = useState("cuisines"); // "cuisines" | "dashboard" | "menu_options" | "recipe"
   const [selectedCuisine, setSelectedCuisine] = useState('');
@@ -13,7 +13,7 @@ export default Object.assign(function App() {
   
   // API Return Cache States
   const [menuOptions, setMenuOptions] = useState([]);
-  const [selectedDish, setSelectedDish] = useState('');
+  const [, setSelectedDish] = useState('');
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [mediaLinks, setMediaLinks] = useState(null);
   
@@ -415,4 +415,6 @@ export default Object.assign(function App() {
       )}
     </div>
   );
-}, { displayName: 'App' });
+}
+
+export default App;
