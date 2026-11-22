@@ -3,6 +3,7 @@ import json
 import asyncio
 from redis import Redis
 from databricks import sql
+from recipe_cache import recipe_cache_key
 
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -12,22 +13,18 @@ DB_HOST = os.getenv("DATABRICKS_SERVER_HOSTNAME")
 DB_PATH = os.getenv("DATABRICKS_HTTP_PATH")
 DB_TOKEN = os.getenv("DATABRICKS_PERSONAL_ACCESS_TOKEN")
 
-def get_cached_recipe(dish_name: str) -> dict | None:
-    """Read-Through Cache: Pulls raw recipe payloads instantly from Redis."""
-    cache_key = f"recipe:{dish_name.lower().replace(' ', '_')}"
+def get_cached_recipe(dish_name: str, cuisine: str, dietary_restrictions=None) -> dict | None:
+    """Look up only a v2 recipe variant; never trust legacy dish-only cache entries."""
+    cache_key = recipe_cache_key(dish_name, cuisine, dietary_restrictions)
     cached_data = redis_client.get(cache_key)
-    if cached_data:
-        print(f"🎯 [REDIS CACHE HIT]: Found '{dish_name}' in cloud hot storage.")
-        return json.loads(cached_data)
-    print(f"💨 [REDIS CACHE MISS]: '{dish_name}' not cached. Routing to Agent Mesh...")
-    return None
+    return json.loads(cached_data) if cached_data else None
 
-def save_recipe_to_cache(dish_name: str, recipe_data: dict):
-    """Hydrates Cloud Redis with structured text JSON blocks."""
-    cache_key = f"recipe:{dish_name.lower().replace(' ', '_')}"
+
+def save_recipe_to_cache(dish_name: str, cuisine: str, recipe_data: dict, dietary_restrictions=None):
+    """Persist one cuisine- and dietary-specific recipe variant."""
+    cache_key = recipe_cache_key(dish_name, cuisine, dietary_restrictions)
     redis_client.set(cache_key, json.dumps(recipe_data))
-    print(f"💾 [REDIS HYDRATED]: '{dish_name}' saved to hot memory cache.")
-
+    return cache_key
 
 async def log_interaction_to_databricks(user_id: str, dish_name: str, cuisine: str, tracking_context: str, recipe_details_json: str = ""):
     """
