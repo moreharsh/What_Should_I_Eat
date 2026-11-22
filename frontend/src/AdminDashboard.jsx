@@ -4,6 +4,9 @@ import { Activity, ArrowLeft, Database, HardDrive, LockKeyhole, LogOut, RefreshC
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SESSION_KEY = 'recipe_admin_session';
 
+/** @param {string} path
+ * @param {{token?: string, method?: string, body?: object}} [options]
+ */
 async function adminRequest(path, { token = '', method = 'GET', body } = {}) {
   let response;
   try {
