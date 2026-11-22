@@ -13,15 +13,38 @@ function App() {
   
   // API Return Cache States
   const [menuOptions, setMenuOptions] = useState([]);
-  const [, setSelectedDish] = useState('');
+  const [selectedDish, setSelectedDish] = useState('');
   const [recipeRestrictions, setRecipeRestrictions] = useState([]);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [mediaLinks, setMediaLinks] = useState(null);
   
   // UI UX Polish States
   const [loading, setLoading] = useState(false);
+  const [menuError, setMenuError] = useState(null);
+  const [recipeError, setRecipeError] = useState(null);
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+  // Fetch and validate API responses before handing data to React components.
+  // 4xx/5xx response bodies often contain { detail: ... }, not menu_options.
+  const fetchJson = async (path, payload) => {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`Server returned a non-JSON response (HTTP ${response.status}).`);
+    }
+    if (!response.ok) {
+      // Avoid showing raw backend stack traces or internal exceptions to users.
+      throw new Error(`Request failed (HTTP ${response.status}). Please retry.`);
+    }
+    return data;
+  };
 
   const toggleDietary = (diet) => {
     setSelectedDiet(prev => 
@@ -31,20 +54,18 @@ function App() {
 
   const refreshDashboardHistory = async (cuisineName) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/menu-dashboard`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: "harsh_123", cuisine: cuisineName, dietary_restrictions: selectedDiet })
+      const data = await fetchJson('/api/menu-dashboard', {
+        user_id: 'harsh_123',
+        cuisine: cuisineName,
+        dietary_restrictions: selectedDiet,
       });
-      const data = await response.json();
-      if (data.has_history) {
-        setTriedFavorites(data.previously_tried);
-      } else {
-        setTriedFavorites([]);
-      }
-      return data.has_history;
+      const favorites = Array.isArray(data.previously_tried) ? data.previously_tried : [];
+      setTriedFavorites(favorites);
+      return favorites.length > 0;
     } catch (err) {
-      console.error("Error refreshing dashboard state:", err);
+      console.error('Error refreshing dashboard state:', err);
+      setTriedFavorites([]);
+      // A history failure should not prevent fresh menu discovery.
       return false;
     }
   };
@@ -67,20 +88,21 @@ function App() {
   // 🚀 MODIFIED: The original Phase 1 loop is now explicitly bound to the Exploration Column
   const triggerAiMenuGeneration = async (cuisineName) => {
     setLoading(true);
-    setCurrentView("menu_options");
+    setMenuError(null);
+    setMenuOptions([]);
+    setCurrentView('menu_options');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/menu`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          cuisine: cuisineName, 
-          dietary_restrictions: selectedDiet // 🚀 FIXED: Renamed key to match your Pydantic schema!
-        })
+      const data = await fetchJson('/api/menu', {
+        cuisine: cuisineName,
+        dietary_restrictions: selectedDiet,
       });
-      const data = await response.json();
+      if (!Array.isArray(data.menu_options) || data.menu_options.length === 0) {
+        throw new Error('No menu suggestions were returned. Please try again.');
+      }
       setMenuOptions(data.menu_options);
     } catch (err) {
-      console.error("Error fetching menu options:", err);
+      console.error('Error fetching menu options:', err);
+      setMenuError(err instanceof Error ? err.message : 'Unable to load menu suggestions.');
     } finally {
       setLoading(false);
     }
@@ -91,19 +113,24 @@ function App() {
     setSelectedDish(dishName);
     setRecipeRestrictions([...restrictions]);
     setRecipeDetails(null);
+    setRecipeError(null);
     setLoading(true);
-    setCurrentView("recipe");
+    setCurrentView('recipe');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/recipe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selected_dish: dishName, dietary_restrictions: restrictions, cuisine: selectedCuisine })
+      const data = await fetchJson('/api/recipe', {
+        selected_dish: dishName,
+        dietary_restrictions: restrictions,
+        cuisine: selectedCuisine,
       });
-      const data = await response.json();
+      if (!data.recipe_details || !Array.isArray(data.recipe_details.ingredients) ||
+          !Array.isArray(data.recipe_details.instructions)) {
+        throw new Error('The server returned incomplete recipe details. Please retry.');
+      }
       setRecipeDetails(data.recipe_details);
       setMediaLinks(data.media_links);
     } catch (err) {
-      console.error("Error fetching recipe details:", err);
+      console.error('Error fetching recipe details:', err);
+      setRecipeError(err instanceof Error ? err.message : 'Unable to load this recipe.');
     } finally {
       setLoading(false);
     }
@@ -281,6 +308,15 @@ function App() {
                 <div key={i} className="h-24 bg-slate-200 animate-pulse rounded-xl" />
               ))}
             </div>
+          ) : menuError ? (
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-3">
+              <h3 className="font-bold text-red-900">Couldn't load menu suggestions</h3>
+              <p className="text-sm text-red-800">{menuError}</p>
+              <div className="flex flex-wrap gap-3">
+                <button onClick={() => triggerAiMenuGeneration(selectedCuisine)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Retry</button>
+                <button onClick={() => setCurrentView('cuisines')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm">Choose another cuisine</button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
               {menuOptions.map((dish, idx) => (
@@ -320,11 +356,17 @@ function App() {
             <ArrowLeft className="h-4 w-4" /> Back to Menu Dashboard
           </button>
 
-          {loading || !recipeDetails ? (
+          {loading ? (
             <div className="space-y-4 animate-pulse">
               <div className="h-48 bg-slate-200 rounded-xl" />
               <div className="h-8 bg-slate-200 w-1/3 rounded" />
               <div className="h-24 bg-slate-200 rounded-xl" />
+            </div>
+          ) : recipeError || !recipeDetails ? (
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 space-y-3">
+              <h3 className="font-bold text-red-900">Couldn't load this recipe</h3>
+              <p className="text-sm text-red-800">{recipeError || 'No recipe details were returned.'}</p>
+              <button onClick={() => fetchRecipe(selectedDish, recipeRestrictions)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Retry recipe</button>
             </div>
           ) : (
             <div className="space-y-8">
