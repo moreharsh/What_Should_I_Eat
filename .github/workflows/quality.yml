@@ -34,7 +34,7 @@ jobs:
       - name: Type-check JavaScript and JSX (TypeScript checkJs)
         run: npx --yes --package typescript@5.9.3 tsc --project jsconfig.json
       - name: Frontend API and race tests
-        run: node --test src/api.test.js
+        run: node --test tests/api.test.mjs
       - name: Production build
         run: npm run build
 
