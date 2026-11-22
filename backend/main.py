@@ -347,15 +347,18 @@ async def get_menu_dashboard(request: MenuDashboardRequest, profile=Depends(get_
     try:
         history_key = user_history_key(profile["user_id"])
         saved_key = user_saved_key(profile["user_id"])
+        viewed_key = user_viewed_key(profile["user_id"])
         cached_recipe_keys = redis_client.smembers(history_key)
         saved_recipe_keys = redis_client.smembers(saved_key)
+        viewed_recipe_keys = redis_client.smembers(viewed_key)
         requested_restrictions = normalize_dietary_restrictions(request.dietary_restrictions)
 
         previously_tried = []
         saved_favorites = []
+        viewed_recipes = []
         target_cuisine = request.cuisine.lower()
 
-        for cache_key in sorted(cached_recipe_keys | saved_recipe_keys):
+        for cache_key in sorted(cached_recipe_keys | saved_recipe_keys | viewed_recipe_keys):
             # Legacy unscoped entries must not bypass dietary constraints.
             if not cache_key.startswith("recipe:v2:"):
                 continue
@@ -375,18 +378,22 @@ async def get_menu_dashboard(request: MenuDashboardRequest, profile=Depends(get_
                                 "teaser": recipe_data.get("chef_pro_tip", "A favorite recipe!")[:85] + "...",
                                 "saved": cache_key in saved_recipe_keys,
                                 "tried": cache_key in cached_recipe_keys,
+                                "viewed": cache_key in viewed_recipe_keys,
                             }
                             if cache_key in cached_recipe_keys:
                                 previously_tried.append(item)
                             if cache_key in saved_recipe_keys:
                                 saved_favorites.append(item)
+                            if cache_key in viewed_recipe_keys:
+                                viewed_recipes.append(item)
                 except Exception as e:
                     print(f"Skipping unparseable cache key {cache_key}: {e}")
 
         return {
-            "has_history": bool(previously_tried or saved_favorites),
+            "has_history": bool(previously_tried or saved_favorites or viewed_recipes),
             "previously_tried": sorted(previously_tried, key=lambda item: item["dish_name"]),
-            "saved_favorites": sorted(saved_favorites, key=lambda item: item["dish_name"])
+            "saved_favorites": sorted(saved_favorites, key=lambda item: item["dish_name"]),
+            "viewed_recipes": sorted(viewed_recipes, key=lambda item: item["dish_name"])
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
