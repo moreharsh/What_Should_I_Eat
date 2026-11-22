@@ -14,6 +14,7 @@ export default Object.assign(function App() {
   // API Return Cache States
   const [menuOptions, setMenuOptions] = useState([]);
   const [selectedDish, setSelectedDish] = useState('');
+  const [recipeRestrictions, setRecipeRestrictions] = useState([]);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [mediaLinks, setMediaLinks] = useState(null);
   
@@ -88,6 +89,8 @@ export default Object.assign(function App() {
   // Phase 2: Call Backend to trigger concurrent Chef + Media assembly nodes
   const fetchRecipe = async (dishName, restrictions = selectedDiet) => {
     setSelectedDish(dishName);
+    setRecipeRestrictions([...restrictions]);
+    setRecipeDetails(null);
     setLoading(true);
     setCurrentView("recipe");
     try {
@@ -325,9 +328,9 @@ export default Object.assign(function App() {
             </div>
           ) : (
             <div className="space-y-8">
-              {selectedDiet.length > 0 && (
+              {recipeRestrictions.length > 0 && (
                 <p role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                  AI-generated recipes are screened for obvious ingredient conflicts, but dietary suitability,
+                  Requested restrictions: {recipeRestrictions.join(', ')}. AI-generated recipes are screened for obvious ingredient conflicts, but dietary suitability,
                   allergens, product labels, and cross-contact are not verified. Check all ingredients before cooking.
                 </p>
               )}
