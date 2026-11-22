@@ -12,6 +12,7 @@ from agents import chef_agent, media_agent
 
 from data_layer import redis_client, log_interaction_to_databricks
 from recipe_cache import normalize_dietary_restrictions, recipe_cache_key, user_history_key
+from dietary_validation import incompatible_ingredients
 
 app = FastAPI(title="What Should I Eat?")
 
@@ -84,6 +85,14 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
         cached_raw = redis_client.get(cache_key)
         
         if cached_raw:
+            parsed_cache = json.loads(cached_raw)
+            if not isinstance(parsed_cache, dict) or "recipe_text" not in parsed_cache:
+                raise HTTPException(status_code=502, detail="Invalid cached recipe format")
+            if normalize_dietary_restrictions(parsed_cache.get("dietary_restrictions", [])) != dietary_restrictions:
+                raise HTTPException(status_code=502, detail="Cached recipe dietary mismatch")
+            recipe_to_check = parsed_cache["recipe_text"]
+            if incompatible_ingredients(recipe_to_check, dietary_restrictions):
+                raise HTTPException(status_code=502, detail="Cached recipe conflicts with dietary restrictions")
             print(f"⚡ [PURE CACHE HIT]: Bypassing LLM Graph execution for '{request.selected_dish}'")
             recipe_content = cached_raw
             
@@ -147,6 +156,18 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
                 try: parsed_fresh_recipe = json.loads(fresh_recipe)
                 except Exception: pass
 
+            if not isinstance(parsed_fresh_recipe, dict):
+                raise HTTPException(status_code=502, detail="Invalid generated recipe")
+            try:
+                conflicts = incompatible_ingredients(parsed_fresh_recipe, dietary_restrictions)
+            except ValueError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if conflicts:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Generated recipe includes ingredients conflicting with dietary restrictions; try again.",
+                )
+
             recipe_metadata = {
                 "dish_name": request.selected_dish,
                 "cuisine": cuisine_context, 
@@ -182,6 +203,8 @@ async def get_recipe_details(request: RecipeRequest, background_tasks: Backgroun
             "media_links": media_links
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"💥 EXCEPTION IN RECIPE ENDPOINT: {e}")
         raise HTTPException(status_code=500, detail=str(e))
