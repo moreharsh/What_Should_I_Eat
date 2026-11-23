@@ -215,7 +215,8 @@ class DietaryAPITests(unittest.TestCase):
 
     def test_menu_returns_validated_items(self):
         self.app.menu_graph.ainvoke.return_value = {"menu_options": [
-            {"dish_name": "Tacos", "teaser": "Fresh", "primary_protein": "Beans"}
+            {"dish_name": name, "teaser": "Fresh", "primary_protein": "Beans"}
+            for name in ("Tacos", "Burritos", "Tamales", "Enchiladas", "Quesadillas")
         ]}
         response = self.client.post("/api/menu", json={
             "cuisine": "Mexican", "dietary_restrictions": ["Vegan"],
@@ -223,6 +224,21 @@ class DietaryAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["menu_options"][0]["dish_name"], "Tacos")
         self.app.menu_graph.ainvoke.assert_awaited_once()
+
+    def test_duplicate_menu_options_are_safe_502(self):
+        self.app.menu_graph.ainvoke.return_value = {"menu_options": [
+            {"dish_name": "Tacos", "teaser": "Fresh", "primary_protein": "Beans"}
+        ] * 5}
+        response = self.client.post("/api/menu", json={
+            "cuisine": "Mexican", "dietary_restrictions": [],
+        })
+        self.assertEqual(response.status_code, 502)
+
+    def test_unexpected_recipe_error_does_not_expose_internal_details(self):
+        self.app.recipe_graph.ainvoke.side_effect = RuntimeError("secret backend error")
+        response = self.post_recipe([])
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("secret backend error", response.text)
 
     def test_menu_model_exception_is_safe_502(self):
         self.app.menu_graph.ainvoke.side_effect = RuntimeError("private provider detail")

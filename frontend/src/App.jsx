@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { postJson } from './api.js';
+import { beginFlow, isActiveFlow } from './requestFlow.js';
 import { Utensils, ArrowLeft, Clock, Users, Flame, ChevronRight, Play, CheckCircle2, Sparkles } from 'lucide-react';
 
 const CUISINES = ['Indian', 'Mexican', 'Italian', 'Japanese', 'Mediterranean', 'Thai'];
@@ -33,32 +35,28 @@ function App() {
   const [menuError, setMenuError] = useState(null);
   const [recipeError, setRecipeError] = useState(null);
   const [actionError, setActionError] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
+  const menuFlowRef = useRef({ id: 0, controller: null, pending: false, cuisine: '' });
+  const recipeFlowRef = useRef({ id: 0, controller: null });
+
+  const startMenuFlow = (cuisine) => {
+    recipeFlowRef.current.controller?.abort();
+    recipeFlowRef.current = { id: recipeFlowRef.current.id + 1, controller: null };
+    const flow = beginFlow(menuFlowRef.current, cuisine);
+    menuFlowRef.current = flow;
+    return flow;
+  };
+
+  const isCurrentMenuFlow = flow => isActiveFlow(menuFlowRef.current, flow);
+  const isCurrentRecipeFlow = flow => isActiveFlow(recipeFlowRef.current, flow);
+
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-  // Fetch and validate API responses before handing data to React components.
-  // 4xx/5xx response bodies often contain { detail: ... }, not menu_options.
-  const fetchJson = async (path, payload, anonymous = false) => {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token && !anonymous ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-    let data;
-    try {
-      data = await response.json();
-    } catch {
-      throw new Error(`Server returned a non-JSON response (HTTP ${response.status}).`);
-    }
-    if (!response.ok) {
-      // Avoid showing raw backend stack traces or internal exceptions to users.
-      throw new Error(`Request failed (HTTP ${response.status}). Please retry.`);
-    }
-    return data;
-  };
+  const fetchJson = (path, payload, anonymous = false, signal) => postJson(
+    `${API_BASE_URL}${path}`, payload,
+    { token: anonymous ? '' : token, signal, timeoutMs: 100000 },
+  );
 
   useEffect(() => {
     const stored = localStorage.getItem('recipe_profile_token');
@@ -93,6 +91,10 @@ function App() {
   };
 
   const logout = async () => {
+    menuFlowRef.current.controller?.abort();
+    recipeFlowRef.current.controller?.abort();
+    menuFlowRef.current = { id: menuFlowRef.current.id + 1, controller: null, pending: false, cuisine: '' };
+    recipeFlowRef.current = { id: recipeFlowRef.current.id + 1, controller: null };
     if (token) {
       fetch(`${API_BASE_URL}/api/session`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
@@ -109,6 +111,10 @@ function App() {
     setViewedRecipes([]);
     setRecipeDetails(null);
     setMediaLinks(null);
+    setLoading(false);
+    setMenuError(null);
+    setRecipeError(null);
+    setHistoryError(null);
     setCurrentView('cuisines');
   };
 
@@ -134,46 +140,59 @@ function App() {
     );
   };
 
-  const refreshDashboardHistory = async (cuisineName) => {
+  const refreshDashboardHistory = async (cuisineName, flow) => {
     try {
       const data = await fetchJson('/api/menu-dashboard', {
         cuisine: cuisineName,
         dietary_restrictions: selectedDiet,
-      });
+      }, false, flow?.controller.signal);
+      if (flow && !isCurrentMenuFlow(flow)) return false;
       const favorites = Array.isArray(data.previously_tried) ? data.previously_tried : [];
       const saved = Array.isArray(data.saved_favorites) ? data.saved_favorites : [];
       const viewed = Array.isArray(data.viewed_recipes) ? data.viewed_recipes : [];
+      setHistoryError(null);
       setTriedFavorites(favorites);
       setSavedFavorites(saved);
       setViewedRecipes(viewed);
       return favorites.length > 0 || saved.length > 0 || viewed.length > 0;
     } catch (err) {
+      if (flow && !isCurrentMenuFlow(flow)) return false;
+      if (flow?.controller.signal.aborted) return false;
       console.error('Error refreshing dashboard state:', err);
+      setHistoryError('Could not load previous recipes. You can still generate a fresh menu.');
       setTriedFavorites([]);
       setSavedFavorites([]);
       setViewedRecipes([]);
-      // A history failure should not prevent fresh menu discovery.
       return false;
     }
   };
 
-  // 🚀 NEW: Checks history state to choose whether to display the split dashboard
   const handleCuisineSelect = async (cuisine) => {
+    if (menuFlowRef.current.pending && menuFlowRef.current.cuisine === cuisine) return;
+    const flow = startMenuFlow(cuisine);
     setSelectedCuisine(cuisine);
     setLoading(true);
-    const hasHistory = await refreshDashboardHistory(cuisine);
-    setLoading(false);
-    
-    if (hasHistory) {
-      setMenuOptions([]); 
-      setCurrentView("dashboard");
-    } else {
-      await triggerAiMenuGeneration(cuisine);
+    setMenuError(null);
+    try {
+      const hasHistory = await refreshDashboardHistory(cuisine, flow);
+      if (!isCurrentMenuFlow(flow) || flow.controller.signal.aborted) return;
+      if (hasHistory) {
+        setMenuOptions([]);
+        setCurrentView('dashboard');
+      } else {
+        await triggerAiMenuGeneration(cuisine, flow);
+      }
+    } finally {
+      if (isCurrentMenuFlow(flow)) {
+        flow.pending = false;
+        setLoading(false);
+      }
     }
   };
 
-  // 🚀 MODIFIED: The original Phase 1 loop is now explicitly bound to the Exploration Column
-  const triggerAiMenuGeneration = async (cuisineName) => {
+  const triggerAiMenuGeneration = async (cuisineName, existingFlow = null) => {
+    if (!existingFlow && menuFlowRef.current.pending && menuFlowRef.current.cuisine === cuisineName) return;
+    const flow = existingFlow || startMenuFlow(cuisineName);
     setLoading(true);
     setMenuError(null);
     setMenuOptions([]);
@@ -182,24 +201,35 @@ function App() {
       const data = await fetchJson('/api/menu', {
         cuisine: cuisineName,
         dietary_restrictions: selectedDiet,
-      });
-      if (!Array.isArray(data.menu_options) || data.menu_options.length === 0) {
-        throw new Error('No menu suggestions were returned. Please try again.');
+      }, false, flow.controller.signal);
+      if (!isCurrentMenuFlow(flow) || flow.controller.signal.aborted) return;
+      if (!Array.isArray(data.menu_options) || data.menu_options.length !== 5) {
+        throw new Error('The server returned an incomplete menu. Please retry.');
       }
       setMenuOptions(data.menu_options);
     } catch (err) {
+      if (!isCurrentMenuFlow(flow) || flow.controller.signal.aborted) return;
       console.error('Error fetching menu options:', err);
       setMenuError(err instanceof Error ? err.message : 'Unable to load menu suggestions.');
     } finally {
-      setLoading(false);
+      if (isCurrentMenuFlow(flow)) {
+        flow.pending = false;
+        setLoading(false);
+      }
     }
   };
 
-  // Phase 2: Call Backend to trigger concurrent Chef + Media assembly nodes
   const fetchRecipe = async (dishName, restrictions = selectedDiet) => {
+    if (recipeFlowRef.current.controller && selectedDish === dishName && loading) return;
+    menuFlowRef.current.controller?.abort();
+    menuFlowRef.current = { id: menuFlowRef.current.id + 1, controller: null, pending: false, cuisine: '' };
+    recipeFlowRef.current.controller?.abort();
+    const flow = beginFlow(recipeFlowRef.current);
+    recipeFlowRef.current = flow;
     setSelectedDish(dishName);
     setRecipeRestrictions([...restrictions]);
     setRecipeDetails(null);
+    setMediaLinks(null);
     setRecipeError(null);
     setActionError(null);
     setIsSaved(false);
@@ -211,7 +241,8 @@ function App() {
         selected_dish: dishName,
         dietary_restrictions: restrictions,
         cuisine: selectedCuisine,
-      });
+      }, false, flow.controller.signal);
+      if (!isCurrentRecipeFlow(flow) || flow.controller.signal.aborted) return;
       if (!data.recipe_details || !Array.isArray(data.recipe_details.ingredients) ||
           !Array.isArray(data.recipe_details.instructions)) {
         throw new Error('The server returned incomplete recipe details. Please retry.');
@@ -221,10 +252,14 @@ function App() {
       setIsSaved(Boolean(data.is_saved));
       setIsTried(Boolean(data.is_tried));
     } catch (err) {
+      if (!isCurrentRecipeFlow(flow) || flow.controller.signal.aborted) return;
       console.error('Error fetching recipe details:', err);
       setRecipeError(err instanceof Error ? err.message : 'Unable to load this recipe.');
     } finally {
-      setLoading(false);
+      if (isCurrentRecipeFlow(flow)) {
+        recipeFlowRef.current.controller = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -326,6 +361,7 @@ function App() {
             </button>
           </div>
 
+          {historyError && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">{historyError}</p>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {viewedRecipes.length > 0 && (
               <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -404,6 +440,7 @@ function App() {
                   <p className="text-xs text-slate-400 max-w-xs mt-1 mb-4">Click below to query your agent network for five customized culinary recommendations.</p>
                   <button
                     onClick={() => triggerAiMenuGeneration(selectedCuisine)}
+                    disabled={loading}
                     className="px-5 py-2.5 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-sm transition transform active:scale-98"
                   >
                     {loading ? "Curation in progress..." : "Generate 5 Fresh Options"}
@@ -428,7 +465,7 @@ function App() {
                   ))}
                   
                   {/* Optional Reset Button to clear and generate again */}
-                  <button 
+                  <button
                     onClick={() => setMenuOptions([])}
                     className="w-full text-center text-[10px] font-bold text-slate-400 hover:text-slate-600 mt-2 transition"
                   >
