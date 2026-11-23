@@ -481,17 +481,18 @@ function App() {
                 <div className="mt-4 flex-1 space-y-2 overflow-y-auto">
                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">✨ Curated AI Recommendations:</h4>
                   {menuOptions.map((dish, idx) => (
-                    <div 
+                    <button
+                      type="button"
                       key={idx}
                       onClick={() => fetchRecipe(dish.dish_name)}
-                      className="p-3.5 bg-white border border-slate-100 rounded-xl hover:border-amber-500 hover:shadow-xs cursor-pointer transition-all flex justify-between items-center group"
+                      className="w-full min-w-0 p-3.5 text-left bg-white border border-slate-100 rounded-xl hover:border-amber-500 hover:shadow-xs transition-all flex justify-between items-center group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
                     >
-                      <div className="space-y-0.5 max-w-[90%]">
+                      <div className="min-w-0 flex-1 space-y-0.5 pr-2">
                         <h4 className="text-xs font-bold text-slate-800 group-hover:text-amber-600 transition-colors">{dish.dish_name}</h4>
                         <p className="text-slate-500 text-[11px] line-clamp-1 leading-normal">{dish.teaser}</p>
                       </div>
                       <ChevronRight className="h-3 w-3 text-slate-300 group-hover:text-amber-500 transform group-hover:translate-x-0.5 transition-all flex-shrink-0" />
-                    </div>
+                    </button>
                   ))}
                   
                   {/* Optional Reset Button to clear and generate again */}
@@ -521,7 +522,7 @@ function App() {
           <h2 className="text-2xl font-bold">5 Handpicked {selectedCuisine} Options</h2>
 
           {loading ? (
-            <div className="space-y-3">
+            <div className="space-y-3" role="status" aria-label="Loading menu recommendations">
               {[...Array(5)].map((_, i) => (
                 <div key={i} className="h-24 bg-slate-200 animate-pulse rounded-xl" />
               ))}
@@ -538,20 +539,21 @@ function App() {
           ) : (
             <div className="space-y-3">
               {menuOptions.map((dish, idx) => (
-                <div 
+                <button
+                  type="button"
                   key={idx}
                   onClick={() => fetchRecipe(dish.dish_name)}
-                  className="p-5 bg-white border border-slate-200 rounded-xl hover:border-indigo-500 hover:shadow-sm cursor-pointer transition-all flex justify-between items-center group"
+                  className="w-full min-w-0 p-5 text-left bg-white border border-slate-200 rounded-xl hover:border-indigo-500 hover:shadow-sm transition-all flex justify-between items-center group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 >
-                  <div className="space-y-1 max-w-[85%]">
+                  <div className="min-w-0 flex-1 space-y-1 pr-3">
                     <h3 className="text-lg font-bold group-hover:text-indigo-600 transition-colors">{dish.dish_name}</h3>
                     <p className="text-slate-600 text-sm leading-relaxed">{dish.teaser}</p>
                     <span className="inline-block bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded font-medium">
                       Protein Base: {dish.primary_protein}
                     </span>
                   </div>
-                  <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-indigo-500 transform group-hover:translate-x-1 transition-all" />
-                </div>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-slate-300 group-hover:text-indigo-500 transform group-hover:translate-x-1 transition-all" />
+                </button>
               ))}
             </div>
           )}
@@ -569,7 +571,7 @@ function App() {
           </button>
 
           {loading ? (
-            <div className="space-y-4 animate-pulse">
+            <div className="space-y-4 animate-pulse" role="status" aria-label="Loading recipe details">
               <div className="h-48 bg-slate-200 rounded-xl" />
               <div className="h-8 bg-slate-200 w-1/3 rounded" />
               <div className="h-24 bg-slate-200 rounded-xl" />
@@ -591,11 +593,13 @@ function App() {
               {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{actionError}</p>}
               <div className="flex flex-wrap gap-3">
                 <button type="button" onClick={() => updateRecipeAction('saved', !isSaved)}
-                  className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isSaved ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  disabled={actionPending} aria-pressed={isSaved}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 ${isSaved ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
                   {isSaved ? 'Saved ✓ · Unsave' : '☆ Save recipe'}
                 </button>
                 <button type="button" onClick={() => updateRecipeAction('tried', !isTried)}
-                  className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isTried ? 'border-indigo-600 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  disabled={actionPending} aria-pressed={isTried}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 ${isTried ? 'border-indigo-600 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700'}`}>
                   {isTried ? 'Tried ✓ · Unmark' : '✓ Mark as tried'}
                 </button>
               </div>
@@ -609,21 +613,21 @@ function App() {
               </div>
 
               {/* Quick Spec Metadata Row */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-white border border-slate-200 rounded-xl text-center shadow-sm">
-                <div className="flex flex-col items-center gap-1 border-r border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-white border border-slate-200 rounded-xl text-center shadow-sm">
+                <div className="flex min-w-0 flex-col items-center gap-1 sm:border-r border-slate-100">
                   <Clock className="h-5 w-5 text-indigo-500" />
                   <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Prep Time</span>
-                  <span className="text-sm font-semibold">{recipeDetails.prep_time}</span>
+                  <span className="max-w-full break-words text-sm font-semibold">{recipeDetails.prep_time}</span>
                 </div>
-                <div className="flex flex-col items-center gap-1 border-r border-slate-100">
+                <div className="flex min-w-0 flex-col items-center gap-1 sm:border-r border-slate-100">
                   <Flame className="h-5 w-5 text-orange-500" />
                   <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Cook Time</span>
-                  <span className="text-sm font-semibold">{recipeDetails.cook_time}</span>
+                  <span className="max-w-full break-words text-sm font-semibold">{recipeDetails.cook_time}</span>
                 </div>
-                <div className="flex flex-col items-center gap-1">
+                <div className="flex min-w-0 flex-col items-center gap-1">
                   <Users className="h-5 w-5 text-emerald-500" />
                   <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Servings</span>
-                  <span className="text-sm font-semibold">{recipeDetails.servings}</span>
+                  <span className="max-w-full break-words text-sm font-semibold">{recipeDetails.servings}</span>
                 </div>
               </div>
 
