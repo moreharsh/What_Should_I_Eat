@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { validateAdminResponse, visibleAdminRecords } from './adminView.js';
 import { Activity, ArrowLeft, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -30,8 +31,8 @@ async function adminRequest(path, { token = '', method = 'GET', body } = {}) {
   return response.json();
 }
 
-function Table({ rows, columns }) {
-  if (!rows.length) return <p className="rounded-xl bg-slate-50 p-5 text-sm text-slate-500">No records available in this view.</p>;
+function Table({ rows = [], columns }) {
+  if (!Array.isArray(rows) || !rows.length) return <p className="rounded-xl bg-slate-50 p-5 text-sm text-slate-500">No records available in this view.</p>;
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200">
       <table className="w-full min-w-[650px] text-left text-xs">
@@ -48,7 +49,7 @@ function Table({ rows, columns }) {
   );
 }
 
-function RecipeList({ label, items }) {
+function RecipeList({ label, items = [] }) {
   return <div className="space-y-2">
     <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{label} ({items.length})</h4>
     {items.length ? <div className="flex flex-wrap gap-2">{items.map((recipe, index) =>
@@ -69,10 +70,12 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('users');
   const [source, setSource] = useState('events');
   const [records, setRecords] = useState(null);
+  const requestIdRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const clearSession = useCallback(() => {
+    requestIdRef.current += 1;
     sessionStorage.removeItem(SESSION_KEY);
     setToken('');
     setVerified(false);
@@ -118,23 +121,34 @@ export default function AdminDashboard() {
 
   const loadTab = useCallback(async () => {
     if (!token || !verified) return;
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError('');
     setRecords(null);
     try {
       const path = activeTab === 'databricks' ? `/databricks?table=${source}` : `/${activeTab}`;
       const response = await adminRequest(path, { token });
-      setRecords(response);
+      if (requestId !== requestIdRef.current) return;
+      const data = validateAdminResponse(activeTab, response);
+      setRecords({ tab: activeTab, source, data });
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unable to read admin data.';
       setError(message);
       if (message.includes('expired admin session')) clearSession();
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [token, verified, activeTab, source, clearSession]);
 
-  useEffect(() => { loadTab(); }, [loadTab]);
+  useEffect(() => {
+    loadTab();
+    return () => { requestIdRef.current += 1; };
+  }, [loadTab]);
+
+  // Tab buttons update immediately, before effects can clear the previous
+  // response. Never try to render that previous response under a new tab.
+  const visibleRecords = visibleAdminRecords(records, activeTab, source);
 
   if (!verified) {
     return <div className="mx-auto max-w-md px-4 py-16">
@@ -201,9 +215,9 @@ export default function AdminDashboard() {
       </div>
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {loading && <p role="status" className="text-sm text-slate-500">Loading admin data…</p>}
-      {!loading && records && activeTab === 'users' && <>
-        <p className="text-xs text-slate-500">Showing up to {records.limit} registered usernames. Details represent the currently cached recipe variants.</p>
-        <div className="grid gap-4">{records.users.map(user =>
+      {!loading && visibleRecords && activeTab === 'users' && <>
+        <p className="text-xs text-slate-500">Showing up to {visibleRecords.limit} registered usernames. Details represent the currently cached recipe variants.</p>
+        <div className="grid gap-4">{visibleRecords.users.map(user =>
           <article key={user.user_id} className="space-y-4 rounded-xl border border-slate-200 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-bold">@{user.username}</h3>
@@ -216,15 +230,15 @@ export default function AdminDashboard() {
             <RecipeList label="Saved" items={user.saved}/>
             <RecipeList label="Tried" items={user.tried}/>
           </article>)}</div>
-        {!records.users.length && <p className="text-sm text-slate-500">No registered user profiles found.</p>}
+        {!visibleRecords.users.length && <p className="text-sm text-slate-500">No registered user profiles found.</p>}
       </>}
-      {!loading && records && activeTab === 'redis' && <>
-        <p className="text-xs text-slate-500">{records.note} Maximum {records.limit} keys per request.</p>
-        <Table rows={records.keys} columns={['key', 'type', 'size', 'ttl_seconds']}/>
+      {!loading && visibleRecords && activeTab === 'redis' && <>
+        <p className="text-xs text-slate-500">{visibleRecords.note} Maximum {visibleRecords.limit} keys per request.</p>
+        <Table rows={visibleRecords.keys} columns={['key', 'type', 'size', 'ttl_seconds']}/>
       </>}
-      {!loading && records && activeTab === 'databricks' && <>
-        <p className="text-xs text-slate-500">Most recent {records.limit} entries, with sensitive recipe payloads and credentials excluded.</p>
-        <Table rows={records.rows} columns={source === 'events'
+      {!loading && visibleRecords && activeTab === 'databricks' && <>
+        <p className="text-xs text-slate-500">Most recent {visibleRecords.limit} entries, with sensitive recipe payloads and credentials excluded.</p>
+        <Table rows={visibleRecords.rows} columns={source === 'events'
           ? ['event_at', 'username', 'event_type', 'dish_name', 'cuisine', 'dietary_restrictions', 'user_id']
           : ['timestamp', 'user_id', 'dish_name', 'cuisine', 'tracking_context']}/>
       </>}
