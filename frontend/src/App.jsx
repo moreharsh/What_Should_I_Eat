@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { postJson } from './api.js';
 import { beginFlow, isActiveFlow } from './requestFlow.js';
+import { recipeOrigin, prepLabel, difficultyLabel } from './recipeUi.js';
 import { Utensils, ArrowLeft, Clock, Users, Flame, ChevronRight, Play, CheckCircle2, Sparkles } from 'lucide-react';
 
 const CUISINES = ['Indian', 'Mexican', 'Italian', 'Japanese', 'Mediterranean', 'Thai'];
@@ -35,6 +36,8 @@ function App() {
   const [menuError, setMenuError] = useState(null);
   const [recipeError, setRecipeError] = useState(null);
   const [actionError, setActionError] = useState(null);
+  const [actionPending, setActionPending] = useState(false);
+  const [recipeReturnView, setRecipeReturnView] = useState("cuisines");
   const [historyError, setHistoryError] = useState(null);
   const menuFlowRef = useRef({ id: 0, controller: null, pending: false, cuisine: '' });
   const recipeFlowRef = useRef({ id: 0, controller: null });
@@ -115,10 +118,14 @@ function App() {
     setMenuError(null);
     setRecipeError(null);
     setHistoryError(null);
+    setRecipeReturnView('cuisines');
+    setActionPending(false);
     setCurrentView('cuisines');
   };
 
   const updateRecipeAction = async (action, active) => {
+    if (actionPending) return;
+    setActionPending(true);
     setActionError(null);
     try {
       await fetchJson('/api/recipe-action', {
@@ -131,6 +138,8 @@ function App() {
       else setIsTried(active);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Failed to update recipe.');
+    } finally {
+      setActionPending(false);
     }
   };
 
@@ -220,6 +229,7 @@ function App() {
   };
 
   const fetchRecipe = async (dishName, restrictions = selectedDiet) => {
+    setRecipeReturnView(previous => recipeOrigin(currentView, previous));
     if (recipeFlowRef.current.controller && selectedDish === dishName && loading) return;
     menuFlowRef.current.controller?.abort();
     menuFlowRef.current = { id: menuFlowRef.current.id + 1, controller: null, pending: false, cuisine: '' };
@@ -232,6 +242,7 @@ function App() {
     setMediaLinks(null);
     setRecipeError(null);
     setActionError(null);
+    setActionPending(false);
     setIsSaved(false);
     setIsTried(false);
     setLoading(true);
@@ -263,6 +274,20 @@ function App() {
     }
   };
 
+  const backFromRecipe = () => {
+    // Invalidate a pending recipe request before navigating.
+    recipeFlowRef.current.controller?.abort();
+    recipeFlowRef.current = { id: recipeFlowRef.current.id + 1, controller: null };
+    setLoading(false);
+    setRecipeError(null);
+    setActionError(null);
+    const destination = recipeOrigin('recipe', recipeReturnView);
+    setCurrentView(destination);
+    // History refresh is useful from the dashboard, but should never
+    // redirect an options-page user away from their five options.
+    if (destination === 'dashboard') void refreshDashboardHistory(selectedCuisine);
+  };
+
   if (checkingSession) return (
     <div className="mx-auto max-w-lg p-10 text-center text-slate-600">Restoring your profile...</div>
   );
@@ -291,15 +316,15 @@ function App() {
   );
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto min-w-0 px-4 py-8">
       {/* Header Layout */}
-      <header className="flex items-center gap-3 mb-10 pb-6 border-b border-slate-200">
+      <header className="flex flex-wrap items-center gap-3 mb-10 pb-6 border-b border-slate-200">
         <Utensils className="h-8 w-8 text-indigo-600" />
-        <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
+        <h1 className="min-w-0 flex-1 text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
           What Should I Eat?
         </h1>
-        <div className="ml-auto flex items-center gap-3">
-          <span className="text-xs font-semibold text-slate-600">@{profile.username}</span>
+        <div className="ml-auto flex min-w-0 items-center gap-3">
+          <span className="max-w-32 truncate text-xs font-semibold text-slate-600" title={`@${profile.username}`}>@{profile.username}</span>
           <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">Sign out</button>
         </div>
       </header>
@@ -309,12 +334,14 @@ function App() {
         <div className="space-y-8 animate-fadeIn">
           <div>
             <h2 className="text-xl font-semibold mb-3">Any dietary restrictions?</h2>
-            <div className="flex gap-3">
+            <div role="group" aria-label="Dietary restrictions" className="flex flex-wrap gap-2 sm:gap-3">
               {DIETARY_OPTIONS.map(diet => (
                 <button
                   key={diet}
+                  type="button"
+                  aria-pressed={selectedDiet.includes(diet)}
                   onClick={() => toggleDietary(diet)}
-                  className={`px-4 py-2 rounded-full border text-sm font-medium transition-all ${
+                  className={`min-h-11 px-4 py-2 rounded-full border text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ${
                     selectedDiet.includes(diet)
                       ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
                       : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
@@ -333,7 +360,7 @@ function App() {
                 <button
                   key={cuisine}
                   onClick={() => handleCuisineSelect(cuisine)} // 🚀 FIXED: Routed to historical router hook
-                  className="p-6 text-left bg-white border border-slate-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group"
+                  className="min-w-0 p-4 sm:p-6 text-left bg-white border border-slate-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                 >
                   <span className="text-lg font-bold group-hover:text-indigo-600 transition-colors block mb-1">
                     {cuisine}
@@ -371,7 +398,7 @@ function App() {
                   {viewedRecipes.map((dish, index) => (
                     <button key={index}
                       onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:border-indigo-500">
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
                       {dish.dish_name}
                     </button>
                   ))}
@@ -384,7 +411,7 @@ function App() {
                 <div className="flex flex-wrap gap-2">
                   {savedFavorites.map((dish, index) => (
                     <button key={index} onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)}
-                      className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold hover:border-emerald-500">
+                      className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold hover:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
                       {dish.dish_name}
                     </button>
                   ))}
@@ -402,23 +429,26 @@ function App() {
               
               <div className="space-y-3">
                 {triedFavorites.map((dish, i) => (
-                  <div
+                  <button
+                    type="button"
                     key={i}
-                    onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)} // Fetch the specific stored recipe variant
-                    className="group bg-white p-4 rounded-xl border border-slate-100 shadow-2xs cursor-pointer hover:border-indigo-500 hover:shadow-sm transition-all flex justify-between items-start"
+                    onClick={() => fetchRecipe(dish.dish_name, dish.dietary_restrictions)}
+                    className="group block w-full min-w-0 rounded-xl border border-slate-100 bg-white p-4 text-left shadow-2xs transition-all hover:border-indigo-500 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                   >
-                    <div className="space-y-1 pr-4">
-                      <div className="flex items-center gap-1.5">
-                        <h4 className="text-sm font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">{dish.dish_name}</h4>
-                        <span className="text-[9px] px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded font-bold">⚡ 10ms</span>
-                      </div>
-                      <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{dish.teaser}</p>
+                    <div className="flex min-w-0 flex-wrap items-start gap-2">
+                      <h4 className="min-w-0 flex-1 break-words text-sm font-bold text-slate-800 group-hover:text-indigo-600">{dish.dish_name}</h4>
+                      <span className="inline-flex w-fit shrink-0 items-center rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Cached</span>
                     </div>
-                    <div className="text-right flex-shrink-0 space-y-1">
-                      <div className="text-[10px] text-slate-400 font-medium">{dish.prep_time}</div>
-                      <div className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-bold capitalize">{dish.difficulty}</div>
+                    {dish.teaser && <p className="mt-1 line-clamp-2 break-words text-xs leading-relaxed text-slate-500">{dish.teaser}</p>}
+                    <div className="mt-3 flex min-w-0 flex-wrap items-start gap-2 border-t border-slate-100 pt-2">
+                      <span className="min-w-0 flex-1 break-words text-[11px] leading-relaxed text-slate-500">
+                        <span className="font-semibold">Prep:</span> {prepLabel(dish.prep_time)}
+                      </span>
+                      <span className="inline-flex h-fit w-fit shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold capitalize text-slate-600">
+                        {difficultyLabel(dish.difficulty)}
+                      </span>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -451,17 +481,18 @@ function App() {
                 <div className="mt-4 flex-1 space-y-2 overflow-y-auto">
                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">✨ Curated AI Recommendations:</h4>
                   {menuOptions.map((dish, idx) => (
-                    <div 
+                    <button
+                      type="button"
                       key={idx}
                       onClick={() => fetchRecipe(dish.dish_name)}
-                      className="p-3.5 bg-white border border-slate-100 rounded-xl hover:border-amber-500 hover:shadow-xs cursor-pointer transition-all flex justify-between items-center group"
+                      className="w-full min-w-0 p-3.5 text-left bg-white border border-slate-100 rounded-xl hover:border-amber-500 hover:shadow-xs transition-all flex justify-between items-center group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
                     >
-                      <div className="space-y-0.5 max-w-[90%]">
+                      <div className="min-w-0 flex-1 space-y-0.5 pr-2">
                         <h4 className="text-xs font-bold text-slate-800 group-hover:text-amber-600 transition-colors">{dish.dish_name}</h4>
                         <p className="text-slate-500 text-[11px] line-clamp-1 leading-normal">{dish.teaser}</p>
                       </div>
                       <ChevronRight className="h-3 w-3 text-slate-300 group-hover:text-amber-500 transform group-hover:translate-x-0.5 transition-all flex-shrink-0" />
-                    </div>
+                    </button>
                   ))}
                   
                   {/* Optional Reset Button to clear and generate again */}
@@ -491,7 +522,7 @@ function App() {
           <h2 className="text-2xl font-bold">5 Handpicked {selectedCuisine} Options</h2>
 
           {loading ? (
-            <div className="space-y-3">
+            <div className="space-y-3" role="status" aria-label="Loading menu recommendations">
               {[...Array(5)].map((_, i) => (
                 <div key={i} className="h-24 bg-slate-200 animate-pulse rounded-xl" />
               ))}
@@ -508,20 +539,21 @@ function App() {
           ) : (
             <div className="space-y-3">
               {menuOptions.map((dish, idx) => (
-                <div 
+                <button
+                  type="button"
                   key={idx}
                   onClick={() => fetchRecipe(dish.dish_name)}
-                  className="p-5 bg-white border border-slate-200 rounded-xl hover:border-indigo-500 hover:shadow-sm cursor-pointer transition-all flex justify-between items-center group"
+                  className="w-full min-w-0 p-5 text-left bg-white border border-slate-200 rounded-xl hover:border-indigo-500 hover:shadow-sm transition-all flex justify-between items-center group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 >
-                  <div className="space-y-1 max-w-[85%]">
+                  <div className="min-w-0 flex-1 space-y-1 pr-3">
                     <h3 className="text-lg font-bold group-hover:text-indigo-600 transition-colors">{dish.dish_name}</h3>
                     <p className="text-slate-600 text-sm leading-relaxed">{dish.teaser}</p>
                     <span className="inline-block bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded font-medium">
                       Protein Base: {dish.primary_protein}
                     </span>
                   </div>
-                  <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-indigo-500 transform group-hover:translate-x-1 transition-all" />
-                </div>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-slate-300 group-hover:text-indigo-500 transform group-hover:translate-x-1 transition-all" />
+                </button>
               ))}
             </div>
           )}
@@ -532,20 +564,14 @@ function App() {
       {currentView === "recipe" && (
         <div className="space-y-6 animate-fadeIn">
           <button 
-            onClick={async () => {
-              setLoading(true);
-              // 🚀 FORCE RE-SYNC: Pull the item we just cooked straight from Redis Cloud
-              await refreshDashboardHistory(selectedCuisine);
-              setLoading(false);
-              setCurrentView("dashboard");
-            }}
-            className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
+            onClick={backFromRecipe}
+            className="flex items-center gap-2 rounded text-sm font-medium text-slate-500 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to Menu Dashboard
+            <ArrowLeft className="h-4 w-4" /> {recipeReturnView === 'menu_options' ? 'Back to Recipe Options' : recipeReturnView === 'dashboard' ? 'Back to Menu Dashboard' : 'Back to Cuisines'}
           </button>
 
           {loading ? (
-            <div className="space-y-4 animate-pulse">
+            <div className="space-y-4 animate-pulse" role="status" aria-label="Loading recipe details">
               <div className="h-48 bg-slate-200 rounded-xl" />
               <div className="h-8 bg-slate-200 w-1/3 rounded" />
               <div className="h-24 bg-slate-200 rounded-xl" />
@@ -567,11 +593,13 @@ function App() {
               {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{actionError}</p>}
               <div className="flex flex-wrap gap-3">
                 <button type="button" onClick={() => updateRecipeAction('saved', !isSaved)}
-                  className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isSaved ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  disabled={actionPending} aria-pressed={isSaved}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 ${isSaved ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
                   {isSaved ? 'Saved ✓ · Unsave' : '☆ Save recipe'}
                 </button>
                 <button type="button" onClick={() => updateRecipeAction('tried', !isTried)}
-                  className={`rounded-xl border px-4 py-2 text-sm font-semibold ${isTried ? 'border-indigo-600 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  disabled={actionPending} aria-pressed={isTried}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 ${isTried ? 'border-indigo-600 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700'}`}>
                   {isTried ? 'Tried ✓ · Unmark' : '✓ Mark as tried'}
                 </button>
               </div>
@@ -585,21 +613,21 @@ function App() {
               </div>
 
               {/* Quick Spec Metadata Row */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-white border border-slate-200 rounded-xl text-center shadow-sm">
-                <div className="flex flex-col items-center gap-1 border-r border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-white border border-slate-200 rounded-xl text-center shadow-sm">
+                <div className="flex min-w-0 flex-col items-center gap-1 sm:border-r border-slate-100">
                   <Clock className="h-5 w-5 text-indigo-500" />
                   <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Prep Time</span>
-                  <span className="text-sm font-semibold">{recipeDetails.prep_time}</span>
+                  <span className="max-w-full break-words text-sm font-semibold">{recipeDetails.prep_time}</span>
                 </div>
-                <div className="flex flex-col items-center gap-1 border-r border-slate-100">
+                <div className="flex min-w-0 flex-col items-center gap-1 sm:border-r border-slate-100">
                   <Flame className="h-5 w-5 text-orange-500" />
                   <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Cook Time</span>
-                  <span className="text-sm font-semibold">{recipeDetails.cook_time}</span>
+                  <span className="max-w-full break-words text-sm font-semibold">{recipeDetails.cook_time}</span>
                 </div>
-                <div className="flex flex-col items-center gap-1">
+                <div className="flex min-w-0 flex-col items-center gap-1">
                   <Users className="h-5 w-5 text-emerald-500" />
                   <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Servings</span>
-                  <span className="text-sm font-semibold">{recipeDetails.servings}</span>
+                  <span className="max-w-full break-words text-sm font-semibold">{recipeDetails.servings}</span>
                 </div>
               </div>
 
