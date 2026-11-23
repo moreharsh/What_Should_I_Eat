@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { validateAdminResponse, visibleAdminRecords } from './adminView.js';
+import { adminErrorMessage } from './adminErrors.js';
 import { Activity, ArrowLeft, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -23,10 +24,10 @@ async function adminRequest(path, { token = '', method = 'GET', body } = {}) {
     throw new Error('Admin API is unreachable. Check the backend deployment.');
   }
   if (!response.ok) {
-    if (response.status === 401) throw new Error('Invalid credentials or expired admin session.');
-    if (response.status === 429) throw new Error('Too many login attempts. Try again later.');
-    if (response.status === 503) throw new Error('Admin service is not configured or temporarily unavailable.');
-    throw new Error(`Admin request failed (HTTP ${response.status}).`);
+    // The backend supplies short, safe error envelopes. Never render raw
+    // exceptions or unrecognized server-provided detail in the browser.
+    const payload = await response.json().catch(() => null);
+    throw new Error(adminErrorMessage(response.status, payload?.detail));
   }
   return response.json();
 }
