@@ -76,6 +76,8 @@
     "srem",
     "setex",
     "scard",
-    "ttls"
+    "ttls",
+    "unconfigured",
+    "qwen"
   ]
 }

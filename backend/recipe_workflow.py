@@ -5,7 +5,8 @@ import time
 
 from langgraph.graph import END, START, StateGraph
 
-from schemas import AgentState
+from schemas import AgentState, RecipeSchema
+from ollama_fallback import generate_ollama_recipe, ollama_config
 
 logger = logging.getLogger(__name__)
 
@@ -36,22 +37,36 @@ def build_recipe_graph(chef_agent, media_agent, *, chef_timeout=CHEF_TIMEOUT_SEC
     async def chef_node(state: AgentState):
         start = time.monotonic()
         try:
-            # The Gemini client and its retry sleeps are synchronous, so use a
-            # worker thread instead of blocking the FastAPI event loop.
+            # Gemini's two configured models are tried inside chef_agent.
+            # The synchronous SDK runs in a worker thread.
             result = await asyncio.wait_for(
                 asyncio.to_thread(chef_agent, state), timeout=chef_timeout
             )
             if not isinstance(result, dict) or not result.get("recipe_details"):
                 raise ValueError("Chef agent returned no recipe details")
-            logger.info("recipe.chef status=ok duration_ms=%.0f",
+            recipe = RecipeSchema.model_validate(result["recipe_details"]).model_dump()
+            logger.info("recipe.chef provider=gemini status=ok duration_ms=%.0f",
                         (time.monotonic() - start) * 1000)
-            return {"recipe_details": result["recipe_details"]}
+            return {"recipe_details": recipe}
         except Exception as exc:
-            logger.exception(
-                "recipe.chef status=failed kind=%s duration_ms=%.0f",
+            logger.warning(
+                "recipe.chef provider=gemini status=failed kind=%s duration_ms=%.0f",
                 type(exc).__name__, (time.monotonic() - start) * 1000,
             )
-            raise
+            if ollama_config() is None:
+                # Disabled means cloud-only: preserve the existing controlled
+                # 502 response from the API; do not fabricate a recipe.
+                raise
+            try:
+                recipe = await generate_ollama_recipe(state)
+                logger.info("recipe.chef provider=ollama status=ok")
+                return {"recipe_details": recipe}
+            except Exception as fallback_exc:
+                logger.warning(
+                    "recipe.chef provider=ollama status=failed kind=%s",
+                    type(fallback_exc).__name__,
+                )
+                raise RuntimeError("All configured recipe providers failed") from fallback_exc
 
     async def media_node(state: AgentState):
         return await run_media_safely(state, media_agent, timeout=media_timeout)
