@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { postJson } from './api.js';
 import { beginFlow, isActiveFlow } from './requestFlow.js';
+import { recipeOrigin, prepLabel, difficultyLabel } from './recipeUi.js';
 import { Utensils, ArrowLeft, Clock, Users, Flame, ChevronRight, Play, CheckCircle2, Sparkles } from 'lucide-react';
 
 const CUISINES = ['Indian', 'Mexican', 'Italian', 'Japanese', 'Mediterranean', 'Thai'];
@@ -35,6 +36,8 @@ function App() {
   const [menuError, setMenuError] = useState(null);
   const [recipeError, setRecipeError] = useState(null);
   const [actionError, setActionError] = useState(null);
+  const [actionPending, setActionPending] = useState(false);
+  const [recipeReturnView, setRecipeReturnView] = useState("cuisines");
   const [historyError, setHistoryError] = useState(null);
   const menuFlowRef = useRef({ id: 0, controller: null, pending: false, cuisine: '' });
   const recipeFlowRef = useRef({ id: 0, controller: null });
@@ -115,10 +118,14 @@ function App() {
     setMenuError(null);
     setRecipeError(null);
     setHistoryError(null);
+    setRecipeReturnView('cuisines');
+    setActionPending(false);
     setCurrentView('cuisines');
   };
 
   const updateRecipeAction = async (action, active) => {
+    if (actionPending) return;
+    setActionPending(true);
     setActionError(null);
     try {
       await fetchJson('/api/recipe-action', {
@@ -131,6 +138,8 @@ function App() {
       else setIsTried(active);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Failed to update recipe.');
+    } finally {
+      setActionPending(false);
     }
   };
 
@@ -220,6 +229,7 @@ function App() {
   };
 
   const fetchRecipe = async (dishName, restrictions = selectedDiet) => {
+    setRecipeReturnView(previous => recipeOrigin(currentView, previous));
     if (recipeFlowRef.current.controller && selectedDish === dishName && loading) return;
     menuFlowRef.current.controller?.abort();
     menuFlowRef.current = { id: menuFlowRef.current.id + 1, controller: null, pending: false, cuisine: '' };
@@ -232,6 +242,7 @@ function App() {
     setMediaLinks(null);
     setRecipeError(null);
     setActionError(null);
+    setActionPending(false);
     setIsSaved(false);
     setIsTried(false);
     setLoading(true);
@@ -261,6 +272,20 @@ function App() {
         setLoading(false);
       }
     }
+  };
+
+  const backFromRecipe = () => {
+    // Invalidate a pending recipe request before navigating.
+    recipeFlowRef.current.controller?.abort();
+    recipeFlowRef.current = { id: recipeFlowRef.current.id + 1, controller: null };
+    setLoading(false);
+    setRecipeError(null);
+    setActionError(null);
+    const destination = recipeOrigin('recipe', recipeReturnView);
+    setCurrentView(destination);
+    // History refresh is useful from the dashboard, but should never
+    // redirect an options-page user away from their five options.
+    if (destination === 'dashboard') void refreshDashboardHistory(selectedCuisine);
   };
 
   if (checkingSession) return (
@@ -532,16 +557,10 @@ function App() {
       {currentView === "recipe" && (
         <div className="space-y-6 animate-fadeIn">
           <button 
-            onClick={async () => {
-              setLoading(true);
-              // 🚀 FORCE RE-SYNC: Pull the item we just cooked straight from Redis Cloud
-              await refreshDashboardHistory(selectedCuisine);
-              setLoading(false);
-              setCurrentView("dashboard");
-            }}
-            className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
+            onClick={backFromRecipe}
+            className="flex items-center gap-2 rounded text-sm font-medium text-slate-500 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to Menu Dashboard
+            <ArrowLeft className="h-4 w-4" /> {recipeReturnView === 'menu_options' ? 'Back to Recipe Options' : recipeReturnView === 'dashboard' ? 'Back to Menu Dashboard' : 'Back to Cuisines'}
           </button>
 
           {loading ? (
