@@ -1,16 +1,41 @@
-# React + Vite
+# React frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This is the Vite/React application for **What Should I Eat?**
 
-Currently, two official plugins are available:
+For the full architecture, API reference, secrets guidance, backend setup, and
+troubleshooting, see the [root README](../ReadMe.md).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Run locally
 
-## React Compiler
+Requires Node.js 22 and a running backend on port 8000.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+cp .env.example .env.local
+npm ci
+npm run dev
+```
 
-## Expanding the Oxlint configuration
+Windows PowerShell: `Copy-Item .env.example .env.local`.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Set `VITE_API_URL=http://localhost:8000` in `.env.local`. The Vite server
+prints its URL (usually http://localhost:5173). The recipe UI is at `/` and
+the read-only administrator interface is at `/admin`; the latter requires
+a separately configured backend `ADMIN_PASSWORD`.
+
+## Test and build
+
+```bash
+node --test tests/*.test.mjs
+npm run lint
+npx --yes --package typescript@5.9.3 tsc --project jsconfig.json
+npm run build
+```
+
+The tests use built-in Node assertions and mocked HTTP responses; they do
+not require live Gemini, Databricks or Redis credentials.
+
+## Security
+
+All `VITE_*` values are embedded into browser code. Put **only** the public
+backend URL in these variables. Do not expose Gemini keys, Redis connection
+strings, Databricks credentials, profile bearer tokens, or the admin password.
