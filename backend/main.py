@@ -18,11 +18,13 @@ from recipe_cache import (
     user_saved_key, user_viewed_key,
 )
 from user_sessions import create_profile, get_profile, revoke_profile
+from admin_api import router as admin_router
 from dietary_validation import incompatible_ingredients, SUPPORTED_RESTRICTIONS
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="What Should I Eat?")
+app.include_router(admin_router)
 
 app.add_middleware(
     CORSMiddleware,

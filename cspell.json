@@ -74,6 +74,8 @@
     "anchov",
     "maida",
     "srem",
-    "setex"
+    "setex",
+    "scard",
+    "ttls"
   ]
 }
