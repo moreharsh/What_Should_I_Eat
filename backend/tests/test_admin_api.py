@@ -80,12 +80,12 @@ def create_app():
         spec.loader.exec_module(module)
     app = FastAPI()
     app.include_router(module.router)
-    return TestClient(app), redis
+    return TestClient(app), redis, data_layer
 
 
 class AdminAPITests(unittest.TestCase):
     def setUp(self):
-        self.client, self.redis = create_app()
+        self.client, self.redis, self.data_layer = create_app()
         self.env = patch.dict(os.environ, {"ADMIN_PASSWORD": "random-password-very-long-123"})
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -259,9 +259,7 @@ class AdminAPITests(unittest.TestCase):
         sql.connect = lambda **kwargs: FakeConnection()
         databricks = types.ModuleType("databricks")
         databricks.sql = sql
-        data = next(route.endpoint.__globals__["data_layer"]
-                    for route in self.client.app.routes
-                    if getattr(route, "path", "") == "/api/admin/popularity")
+        data = self.data_layer
         with patch.dict(sys.modules, {"databricks": databricks, "databricks.sql": sql}):
             with patch.object(data, "DB_HOST", "mock-host"):
                 with patch.object(data, "DB_PATH", "/sql"):
@@ -325,9 +323,7 @@ class AdminAPITests(unittest.TestCase):
         sql.connect = lambda **kwargs: FakeConnection()
         db = types.ModuleType("databricks")
         db.sql = sql
-        data = next(route.endpoint.__globals__["data_layer"]
-                    for route in self.client.app.routes
-                    if getattr(route, "path", "") == "/api/admin/popularity")
+        data = self.data_layer
         with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
             with patch.object(data, "DB_HOST", "mock-host"):
                 with patch.object(data, "DB_PATH", "/sql"):
