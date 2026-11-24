@@ -1,0 +1,57 @@
+name: Bug report
+description: Report reproducible behavior that should be fixed
+title: "[Bug] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not share tokens, passwords, private profile activity or production secrets. See SECURITY.md for vulnerability reports.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happens instead? Include a sanitized error message if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Select a cuisine...
+        2. Open a dish...
+        3. Observe...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Frontend / Mobile
+        - Backend / API
+        - Redis / History
+        - Gemini / Agents
+        - Databricks / Analytics
+        - CI / Deployment
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Browser, OS, local or deployed, and commit SHA if known
+  - type: textarea
+    id: additional
+    attributes:
+      label: Supporting context
+      description: Sanitized screenshots, observed frequency, and workarounds. Never paste credentials or tokens.

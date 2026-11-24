@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a specific, testable improvement
+title: "[Feature] "
+labels: []
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or user need
+      description: Who benefits, and what is missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the simplest useful behavior or interface.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable outcomes and edge cases.
+      placeholder: |
+        - [ ] Main path works...
+        - [ ] Empty/error path is handled...
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing and dependencies
+      description: Mocked tests, security/accessibility, external APIs and migration considerations.
