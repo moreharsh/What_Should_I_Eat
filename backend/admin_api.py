@@ -246,3 +246,75 @@ async def databricks_events(table: str = "events", admin=Depends(require_admin))
         logger.exception("Admin read-only Databricks query failed: table=%s", table)
         raise HTTPException(status_code=503, detail="Analytics temporarily unavailable") from None
     return {"table": table, "rows": rows, "limit": MAX_EVENTS}
+
+
+# Aggregates intentionally expose only category labels + counts. Unlike
+# /databricks, they never return usernames, user IDs or event payloads.
+ANALYTICS_WINDOWS = (7, 30, 90)
+POPULARITY_LIMIT = 10
+
+
+@router.get("/popularity")
+async def recipe_popularity(days: int = 30, admin=Depends(require_admin)):
+    """Last N UTC days, measured from the Databricks SQL warehouse clock.
+
+    Dish selections are user_clicks recipe-open rows (cached or generated).
+    Cuisine views are app_user_events viewed rows. Counts are event counts,
+    not unique users and not saved/tried preferences.
+    """
+    if days not in ANALYTICS_WINDOWS:
+        raise HTTPException(status_code=422, detail="Unsupported analytics window")
+    if not all([data_layer.DB_HOST, data_layer.DB_PATH, data_layer.DB_TOKEN]):
+        raise HTTPException(status_code=503, detail="Databricks is not configured")
+
+    # days is allowlisted above, never an arbitrary SQL fragment or table name.
+    cutoff = f"CURRENT_TIMESTAMP() - INTERVAL {days} DAYS"
+    queries = (
+        (
+            "SELECT dish_name AS label, COUNT(*) AS event_count "
+            "FROM default.user_clicks "
+            f"WHERE timestamp >= {cutoff} "
+            "AND tracking_context IN ('CachedCuisine', 'DiscoveryFeed') "
+            "AND dish_name IS NOT NULL AND TRIM(dish_name) <> '' "
+            "GROUP BY dish_name ORDER BY event_count DESC, label ASC LIMIT 10"
+        ),
+        (
+            "SELECT cuisine AS label, COUNT(*) AS event_count "
+            "FROM default.app_user_events "
+            f"WHERE event_at >= {cutoff} AND event_type = 'viewed' "
+            "AND cuisine IS NOT NULL AND TRIM(cuisine) <> '' "
+            "GROUP BY cuisine ORDER BY event_count DESC, label ASC LIMIT 10"
+        ),
+    )
+
+    def read():
+        from databricks import sql
+        with sql.connect(
+            server_hostname=data_layer.DB_HOST, http_path=data_layer.DB_PATH,
+            access_token=data_layer.DB_TOKEN
+        ) as conn:
+            result = []
+            with conn.cursor() as cursor:
+                for statement in queries:
+                    cursor.execute(statement)
+                    rows = cursor.fetchmany(POPULARITY_LIMIT)
+                    result.append([
+                        {"label": str(label)[:120], "count": int(count)}
+                        for label, count in rows
+                    ])
+            return result
+
+    try:
+        dishes, cuisines = await asyncio.to_thread(read)
+    except Exception:
+        logger.warning("Admin popularity query unavailable")
+        raise HTTPException(status_code=503, detail="Analytics temporarily unavailable") from None
+    return {
+        "days": days,
+        "timezone": "UTC",
+        "top_dishes": dishes,
+        "top_cuisines": cuisines,
+        "dish_metric": "recipe_open_events",
+        "cuisine_metric": "recipe_view_events",
+        "limit": POPULARITY_LIMIT,
+    }
