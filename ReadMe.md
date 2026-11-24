@@ -2,7 +2,8 @@
 
 A full-stack recipe discovery application. Pick a cuisine and dietary preferences, get five AI-curated dishes, open a structured recipe with optional media, and keep separate **viewed**, **saved**, and **tried** collections. An optional read-only administrator interface shows profile activity, Redis metadata, and Databricks events.
 
-**Live app:** https://what-should-i-eat-mu.vercel.app/  
+**Live app:** https://what-should-i-eat-mu.vercel.app/
+
 **Admin UI:** https://what-should-i-eat-mu.vercel.app/admin
 
 > **Demo identity warning:** Recipe profiles use usernames **without passwords**. Anyone who enters the same username can access that profile's saved and tried dishes. Do not use this as private or production user authentication.
