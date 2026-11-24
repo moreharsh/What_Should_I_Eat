@@ -10,6 +10,18 @@ export function validateAdminResponse(tab, data) {
     }
     return data;
   }
+  if (tab === 'popularity') {
+    const validRows = rows => Array.isArray(rows) && rows.length <= 10 &&
+      rows.every(item => typeof item.label === 'string' &&
+        item.label.length <= 120 && Number.isSafeInteger(item.count) && item.count >= 0);
+    if (!data || ![7, 30, 90].includes(data.days) || data.timezone !== 'UTC' ||
+        data.dish_metric !== 'recipe_open_events' ||
+        data.cuisine_metric !== 'recipe_view_events' ||
+        !validRows(data.top_dishes) || !validRows(data.top_cuisines)) {
+      throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+    }
+    return data;
+  }
   const field = tab === 'users' ? 'users' : tab === 'redis' ? 'keys' : tab === 'databricks' ? 'rows' : null;
   if (!field || !data || !Array.isArray(data[field])) {
     throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
@@ -18,7 +30,7 @@ export function validateAdminResponse(tab, data) {
 }
 
 export function visibleAdminRecords(records, tab, source) {
-  if (!records || records.tab !== tab || (tab === 'databricks' && records.source !== source)) {
+  if (!records || records.tab !== tab || ((tab === 'databricks' || tab === 'popularity') && records.source !== source)) {
     return null;
   }
   return records.data;
