@@ -30,6 +30,10 @@ If these check names do not appear, open a PR to trigger the workflows and then 
 3. Remove the test error and verify all checks run again and the PR becomes mergeable.
 4. Try a direct push to `main` only if it is safe and authorized; the ruleset should refuse pushes that bypass required PR review.
 
+## Optional security checks after triage
+
+The new `Dependency Security` workflow adds two independent PR checks: `Frontend dependency vulnerability scan` and `Backend dependency vulnerability scan`. First inspect any discovered vulnerabilities and establish a clean baseline. Then an admin may add both names to the ruleset. The `Public backend availability` job runs on `main` pushes only, so **do not** require it for PRs. See `SECURITY_SCANNING.md` and `RELEASE_RUNBOOK.md`.
+
 ## What this does not cover
 
 - The `Vercel` deployment status is separate. Add `Vercel` as a sixth required status check if deployment success must gate merging.
