@@ -43,7 +43,7 @@ The recipe cache is keyed by dish, cuisine, and normalized dietary restrictions.
 ### Tech stack
 
 - **Frontend:** React 19, Vite, Tailwind CSS 4, Lucide icons.
-- **Backend:** Python 3.11+, FastAPI, LangGraph, Google Gemini, optional Ollama.
+- **Backend:** Python 3.11 (pinned runtime snapshot), FastAPI, LangGraph, Google Gemini, optional Ollama.
 - **Data:** Redis for active profiles/history/cache; Databricks SQL and Delta tables for analytics.
 - **Media:** optional YouTube Data API and Spoonacular search; fallback media may be shown when the integrations are unavailable.
 - **Deployment:** Vercel frontend; Render backend. The repository also contains a Power BI dashboard file.
@@ -95,8 +95,17 @@ source .venv/bin/activate
 # Windows PowerShell: .venv\Scripts\Activate.ps1
 
 python -m pip install -r requirements.txt
+python -m pip check
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+**Dependency policy:** Backend runtime dependencies (including transitive packages)
+are pinned in `backend/requirements.txt` from a Python 3.11 Linux resolution.
+Edit direct package names in `backend/requirements.in` and regenerate/review
+pins before upgrading; do not install from the unpinned input in production.
+For offline mocked backend tests, install both `backend/requirements.txt` and
+`backend/requirements-ci.txt` in a Python 3.11 virtual environment. See
+[Python dependency policy](backend/DEPENDENCIES.md).
 
 The API is served at `http://127.0.0.1:8000`. For health verification: `curl http://127.0.0.1:8000/api/health`. Starting FastAPI does not perform an end-to-end Gemini/Redis/Databricks readiness check: verify those services independently.
 

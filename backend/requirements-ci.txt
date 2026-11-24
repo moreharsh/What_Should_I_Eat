@@ -1,0 +1,6 @@
+# Python 3.11-only CI tools not installed on the Render runtime.
+# Use alongside backend/requirements.txt (reviewed production/runtime pins).
+# Each direct CI tool is version-pinned; runtime transitives are pinned in
+# requirements.txt. The pinned httpx2 package supports current TestClient use.
+ruff==0.14.6
+httpx2==2.16.2
