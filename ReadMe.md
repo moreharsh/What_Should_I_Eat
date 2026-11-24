@@ -1,5 +1,9 @@
 # What Should I Eat?
 
+[![Repository Quality](https://github.com/moreharsh/What_Should_I_Eat/actions/workflows/quality.yml/badge.svg)](https://github.com/moreharsh/What_Should_I_Eat/actions/workflows/quality.yml) [![Dietary cache regression tests](https://github.com/moreharsh/What_Should_I_Eat/actions/workflows/dietary-cache-tests.yml/badge.svg)](https://github.com/moreharsh/What_Should_I_Eat/actions/workflows/dietary-cache-tests.yml)
+
+**Engineering resources:** [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [CI checks](.github/QUALITY_CHECKS.md) · [Branch protection](.github/BRANCH_PROTECTION.md) · [Open issues](https://github.com/moreharsh/What_Should_I_Eat/issues)
+
 A full-stack recipe discovery application. Pick a cuisine and dietary preferences, get five AI-curated dishes, open a structured recipe with optional media, and keep separate **viewed**, **saved**, and **tried** collections. An optional read-only administrator interface shows profile activity, Redis metadata, and Databricks events.
 
 **Live app:** https://what-should-i-eat-mu.vercel.app/
