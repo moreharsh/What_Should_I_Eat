@@ -78,6 +78,9 @@
     "scard",
     "ttls",
     "unconfigured",
-    "qwen"
+    "qwen",
+    "compileall",
+    "unlinted",
+    "venv"
   ]
 }
