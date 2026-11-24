@@ -143,8 +143,16 @@ export default function AdminDashboard() {
   }, [token, verified, activeTab, source, clearSession]);
 
   useEffect(() => {
-    loadTab();
-    return () => { requestIdRef.current += 1; };
+    let active = true;
+    // Start the initial fetch asynchronously so effects do not synchronously
+    // enqueue loading-state updates. The cleanup also guards a queued fetch.
+    Promise.resolve().then(() => {
+      if (active) void loadTab();
+    });
+    return () => {
+      active = false;
+      requestIdRef.current += 1;
+    };
   }, [loadTab]);
 
   // Tab buttons update immediately, before effects can clear the previous
