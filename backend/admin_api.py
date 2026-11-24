@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import data_layer
 from data_layer import redis_client
 from recipe_cache import user_history_key, user_saved_key, user_viewed_key
+from maintenance_api import HEARTBEAT_KEY
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -185,6 +186,21 @@ def redis_inspection(admin=Depends(require_admin)):
             break
     return {"keys": sorted(records, key=lambda item: item["key"]), "limit": MAX_REDIS_KEYS,
             "note": "Read-only metadata for allowlisted keys. Session keys and raw values are hidden."}
+
+
+@router.get("/redis-heartbeat")
+def redis_heartbeat_status(admin=Depends(require_admin)):
+    """Read-only maintenance timestamp, separate from recipe/profile key metadata.
+
+    The admin session is sufficient; never send the maintenance write token
+    to the browser or expose arbitrary Redis keys.
+    """
+    try:
+        last_updated = redis_client.get(HEARTBEAT_KEY)
+    except Exception:
+        logger.warning("Admin Redis heartbeat read unavailable")
+        raise HTTPException(status_code=503, detail="Redis heartbeat status unavailable") from None
+    return {"key": HEARTBEAT_KEY, "last_updated_utc": last_updated}
 
 
 ALLOWED_TABLES = {
