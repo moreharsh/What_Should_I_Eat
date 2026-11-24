@@ -15,12 +15,15 @@
 
 ## Release checklist
 
-1. Review code changes and dependency advisories in the PR.
+1. Review code changes and dependency advisories in the PR. For backend
+   dependency changes, confirm Render uses Python 3.11 and installs
+   `backend/requirements.txt` rather than `requirements.in`.
 2. Confirm all five existing CI checks and both dependency scans are green.
 3. Merge only after protected-main rules allow it.
 4. Check the Vercel and Render deployment dashboards for the expected commit.
 5. Inspect the smoke workflow run and confirm Render reports a successful
-   deployment of that same commit.
+   deployment of that same commit. After a dependency-lock update, manually
+   check Render build/install logs for dependency resolution errors.
 6. Perform a read-only admin/dashboard check, then optionally a controlled
    user recipe test if the release changes recipe behavior. Do not generate
    billable AI content in automated PR checks.
