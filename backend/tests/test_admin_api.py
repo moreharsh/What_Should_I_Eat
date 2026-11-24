@@ -196,7 +196,14 @@ class AdminAPITests(unittest.TestCase):
     def test_redis_heartbeat_status_unavailable_returns_safe_error(self):
         token = self.login()
         headers = {"Authorization": f"Bearer {token}"}
-        with patch.object(self.redis, "get", side_effect=ConnectionError("private Redis URI")):
+        original_get = self.redis.get
+
+        def fail_only_heartbeat(key):
+            if key == "maintenance:redis-heartbeat:last-updated-utc":
+                raise ConnectionError("private Redis URI")
+            return original_get(key)
+
+        with patch.object(self.redis, "get", side_effect=fail_only_heartbeat):
             response = self.client.get("/api/admin/redis-heartbeat", headers=headers)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private Redis URI", response.text)
