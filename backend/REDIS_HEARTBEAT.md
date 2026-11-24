@@ -24,6 +24,10 @@ delayed or disabled for inactive repositories; monitor each run.
 The `GET` may itself count as Redis read activity, but using `POST` for the
 explicit maintenance write keeps HTTP semantics and last-updated meaning clear.
 
+## Admin dashboard visibility
+
+The authenticated admin dashboard at `/admin` includes a dedicated **Redis maintenance** tab. It uses `GET /api/admin/redis-heartbeat` with the existing admin session to show the last successful write in a separate table (UTC and America/New_York). This **does not** send the heartbeat maintenance token to the browser, does not write a new heartbeat and does not mix the operational key with the ordinary Redis inspector key listing. Before any heartbeat is written, it displays a clear empty state.
+
 ## Setup (GitHub Actions + Render)
 
 1. Generate a unique secret of at least 32 random characters locally; for

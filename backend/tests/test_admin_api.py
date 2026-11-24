@@ -65,6 +65,8 @@ def create_app():
     data_layer.DB_HOST = None
     data_layer.DB_PATH = None
     data_layer.DB_TOKEN = None
+    maintenance = types.ModuleType("maintenance_api")
+    maintenance.HEARTBEAT_KEY = "maintenance:redis-heartbeat:last-updated-utc"
     cache = types.ModuleType("recipe_cache")
     cache.user_viewed_key = lambda uid: f"user:{uid}:viewed:v2"
     cache.user_saved_key = lambda uid: f"user:{uid}:saved:v2"
@@ -73,7 +75,8 @@ def create_app():
         "admin_api_under_test", Path(__file__).resolve().parents[1] / "admin_api.py"
     )
     module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {"data_layer": data_layer, "recipe_cache": cache}):
+    with patch.dict(sys.modules, {"data_layer": data_layer, "recipe_cache": cache,
+                                  "maintenance_api": maintenance}):
         spec.loader.exec_module(module)
     app = FastAPI()
     app.include_router(module.router)
@@ -96,7 +99,8 @@ class AdminAPITests(unittest.TestCase):
 
     def test_admin_endpoints_all_require_authentication(self):
         for path in ("/api/admin/users", "/api/admin/redis",
-                     "/api/admin/databricks?table=events", "/api/admin/session"):
+                     "/api/admin/databricks?table=events", "/api/admin/session",
+                     "/api/admin/redis-heartbeat"):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 401)
@@ -165,6 +169,44 @@ class AdminAPITests(unittest.TestCase):
         self.assertNotIn("private-token", text)
         self.assertNotIn("secret_recipe_body", text)
         self.assertNotIn("admin:session:", text)
+
+    def test_redis_heartbeat_is_read_only_and_separate_from_general_inspector(self):
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+        key = "maintenance:redis-heartbeat:last-updated-utc"
+        url = "/api/admin/redis-heartbeat"
+
+        missing = self.client.get(url, headers=headers)
+        self.assertEqual(missing.status_code, 200)
+        self.assertEqual(missing.json(), {"key": key, "last_updated_utc": None})
+
+        timestamp = "2026-11-24T01:26:57.386045+00:00"
+        self.redis.values[key] = timestamp
+        original = dict(self.redis.values)
+        response = self.client.get(url, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"key": key, "last_updated_utc": timestamp})
+        self.assertEqual(self.redis.values, original)
+
+        inspector = self.client.get("/api/admin/redis", headers=headers)
+        self.assertEqual(inspector.status_code, 200)
+        self.assertNotIn(key, inspector.text)
+        self.assertNotIn(timestamp, inspector.text)
+
+    def test_redis_heartbeat_status_unavailable_returns_safe_error(self):
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+        original_get = self.redis.get
+
+        def fail_only_heartbeat(key):
+            if key == "maintenance:redis-heartbeat:last-updated-utc":
+                raise ConnectionError("private Redis URI")
+            return original_get(key)
+
+        with patch.object(self.redis, "get", side_effect=fail_only_heartbeat):
+            response = self.client.get("/api/admin/redis-heartbeat", headers=headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("private Redis URI", response.text)
 
     def test_databricks_table_is_allowlisted_and_absent_service_safe(self):
         token = self.login()

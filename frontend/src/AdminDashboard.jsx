@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { validateAdminResponse, visibleAdminRecords } from './adminView.js';
+import { redisHeartbeatRows, validateAdminResponse, visibleAdminRecords } from './adminView.js';
 import { adminErrorMessage } from './adminErrors.js';
-import { Activity, ArrowLeft, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
+import { Activity, ArrowLeft, Clock3, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SESSION_KEY = 'recipe_admin_session';
@@ -127,7 +127,8 @@ export default function AdminDashboard() {
     setError('');
     setRecords(null);
     try {
-      const path = activeTab === 'databricks' ? `/databricks?table=${source}` : `/${activeTab}`;
+      const path = activeTab === 'databricks' ? `/databricks?table=${source}`
+        : activeTab === 'maintenance' ? '/redis-heartbeat' : `/${activeTab}`;
       const response = await adminRequest(path, { token });
       if (requestId !== requestIdRef.current) return;
       const data = validateAdminResponse(activeTab, response);
@@ -188,6 +189,7 @@ export default function AdminDashboard() {
   const tabs = [
     { id: 'users', label: 'Users & selections', icon: Users },
     { id: 'redis', label: 'Redis inspector', icon: HardDrive },
+    { id: 'maintenance', label: 'Redis maintenance', icon: Clock3 },
     { id: 'databricks', label: 'Databricks events', icon: Database },
   ];
 
@@ -244,6 +246,22 @@ export default function AdminDashboard() {
       {!loading && visibleRecords && activeTab === 'redis' && <>
         <p className="text-xs text-slate-500">{visibleRecords.note} Maximum {visibleRecords.limit} keys per request.</p>
         <Table rows={visibleRecords.keys} columns={['key', 'type', 'size', 'ttl_seconds']}/>
+      </>}
+      {!loading && visibleRecords && activeTab === 'maintenance' && <>
+        <p className="text-xs text-slate-500">
+          Last successful heartbeat write, kept separate from recipe and profile keys.
+          This view only reads the timestamp; it does not trigger another heartbeat.
+        </p>
+        {visibleRecords.last_updated_utc === null
+          ? <p role="status" className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+              No heartbeat has been recorded yet.
+            </p>
+          : <Table rows={redisHeartbeatRows(visibleRecords)}
+              columns={['key', 'last_updated_utc', 'last_updated_eastern']}/>}
+        <p className="text-xs text-slate-500">
+          A recent timestamp confirms a Redis write, not that every scheduled job will succeed.
+          Check GitHub Actions for upcoming run results.
+        </p>
       </>}
       {!loading && visibleRecords && activeTab === 'databricks' && <>
         <p className="text-xs text-slate-500">Most recent {visibleRecords.limit} entries, with sensitive recipe payloads and credentials excluded.</p>
