@@ -24,7 +24,9 @@ Thanks for improving **What Should I Eat?** This is a React/Vite + FastAPI appli
 Run these before requesting review:
 
 ```sh
-# From repository root
+# From repository root (inside a Python 3.11 virtual environment)
+python -m pip install -r backend/requirements.txt -r backend/requirements-ci.txt
+python -m pip check
 python -m compileall -q backend
 cd backend
 python -m unittest discover -s tests -v
@@ -36,7 +38,8 @@ npx --yes --package typescript@5.9.3 tsc --project jsconfig.json
 npm run build
 ```
 
-For isolated backend test dependencies, follow the exact installation commands in [README](ReadMe.md). CI also runs Python correctness lint and spelling/whitespace checks. [Quality checks](.github/QUALITY_CHECKS.md) explains each check.
+The backend's [dependency policy](backend/DEPENDENCIES.md) documents how to
+regenerate the Python 3.11 runtime pin snapshot and review changes. CI also runs Python correctness lint and spelling/whitespace checks. [Quality checks](.github/QUALITY_CHECKS.md) explains each check.
 
 ## Pull request guidelines
 
