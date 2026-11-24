@@ -1,0 +1,48 @@
+name: Production API smoke test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-api-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Public backend availability
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
+    steps:
+      - name: Validate target configuration
+        run: |
+          if [ -z "$BACKEND_BASE_URL" ]; then
+            echo "::error::Repository variable BACKEND_BASE_URL is required."
+            exit 1
+          fi
+          case "$BACKEND_BASE_URL" in
+            https://*) ;;
+            *) echo "::error::Only HTTPS backend URLs are supported."; exit 1 ;;
+          esac
+      - name: Check public backend health response
+        run: |
+          response=$(curl --fail --silent --show-error \
+            --retry 8 --retry-all-errors --retry-delay 15 \
+            --connect-timeout 20 --max-time 40 \
+            --url "${BACKEND_BASE_URL%/}/api/health")
+          printf '%s' "$response" | python -c '
+          import json, sys
+          try:
+              payload = json.load(sys.stdin)
+          except (ValueError, TypeError):
+              sys.exit("Invalid JSON from public backend health endpoint")
+          if payload.get("Health_status_code") != 200 or payload.get("Health_status") != "Active":
+              sys.exit("Unexpected backend health response")
+          print("Public backend health response validated")
+          '
