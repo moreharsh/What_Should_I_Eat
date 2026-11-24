@@ -86,7 +86,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-        with:
           fetch-depth: 0
       - name: Reject whitespace errors
         run: git diff --check "${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}" HEAD
