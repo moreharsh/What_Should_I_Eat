@@ -37,7 +37,7 @@ def write_redis_heartbeat(x_heartbeat_token: str | None = Header(default=None)):
     try:
         redis_client.set(HEARTBEAT_KEY, timestamp)
     except Exception:
-        logger.exception("Redis maintenance heartbeat failed")
+        logger.warning("Redis maintenance heartbeat failed")
         raise HTTPException(status_code=503, detail="Redis heartbeat unavailable") from None
 
     return {"status": "ok", "last_updated_utc": timestamp}
@@ -50,7 +50,7 @@ def read_redis_heartbeat(x_heartbeat_token: str | None = Header(default=None)):
     try:
         timestamp = redis_client.get(HEARTBEAT_KEY)
     except Exception:
-        logger.exception("Redis maintenance heartbeat status unavailable")
+        logger.warning("Redis maintenance heartbeat status unavailable")
         raise HTTPException(status_code=503, detail="Redis heartbeat unavailable") from None
 
     return {"status": "ok", "last_updated_utc": timestamp}
