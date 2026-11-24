@@ -9,11 +9,11 @@ from the existing five protected checks (their exact names remain unchanged).
 - **npm:** `npm ci --ignore-scripts` from the committed lockfile, followed by
   `npm audit --audit-level=high`. High/critical advisories fail; low/moderate
   findings remain visible in output and need triage, not silent acceptance.
-- **Python:** `pip-audit==2.10.1` resolves `backend/requirements.txt` and
-  fails if PyPI/OSV reports known vulnerabilities in the resolved packages.
-  **Important:** backend requirements are currently unpinned, so this audits
-  the dependency graph that a fresh resolver would select, NOT an immutable
-  production release lockfile. Production may use different installed versions.
+- **Python:** `pip-audit==2.10.1` checks the pinned Python 3.11 dependency
+  snapshot in `backend/requirements.txt` and fails on known vulnerabilities.
+  This is a complete version-pin snapshot, **not a hash-locked wheel archive**;
+  platform-specific artifacts and separately deployed revisions must still
+  be verified on Render.
 - No API keys or real Redis/Databricks/Gemini requests are needed. The workflow
   runs without privileged repository tokens or PR secrets.
 
@@ -23,10 +23,10 @@ from the existing five protected checks (their exact names remain unchanged).
    advisory identifier and fixed version.
 2. Identify whether this is a direct or transitive dependency and whether the
    vulnerable feature is reachable; still treat all high/critical as blockers.
-3. Upgrade the least disruptive compatible package, update the relevant
-   manifest and lockfile (npm), rerun CI and tests. For Python, resolve and
-   commit a reviewed production lock separately before claiming a reproducible
-   deployment.
+3. Upgrade the least disruptive compatible package. For npm, update the
+   manifest and lockfile. For Python, update the direct requirement in
+   `backend/requirements.in` and regenerate/review the full pinned
+   `backend/requirements.txt` snapshot on Python 3.11. Rerun tests and audits.
 4. If upstream has no fix, open a tracked issue with owner, justification,
    mitigation and review date. Document any temporary exception explicitly in
    the PR, never hide it in an unconditional `|| true`.
