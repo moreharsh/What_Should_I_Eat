@@ -22,6 +22,37 @@ export function validateAdminResponse(tab, data) {
     }
     return data;
   }
+  if (tab === 'activity') {
+    const events = ['profile_created', 'viewed', 'saved', 'unsaved', 'tried', 'untried'];
+    const validDate = value => typeof value === 'string' &&
+      /^\\d{4}-\\d{2}-\\d{2}$/.test(value) &&
+      !Number.isNaN(Date.parse(value + 'T00:00:00Z'));
+    if (!data || ![7, 30, 90].includes(data.days) || data.timezone !== 'UTC' ||
+        data.metric !== 'logged_event_count' ||
+        data.distinct_metric !== 'daily_distinct_profile_uuids' ||
+        !Array.isArray(data.events) || data.events.join(',') !== events.join(',') ||
+        !Array.isArray(data.rows) || data.rows.length !== data.days * events.length) {
+      throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+    }
+    const seen = new Set();
+    const dates = new Set();
+    for (const row of data.rows) {
+      const key = row.date + ':' + row.event_type;
+      if (!validDate(row.date) || !events.includes(row.event_type) || seen.has(key) ||
+          !Number.isSafeInteger(row.count) || row.count < 0 ||
+          !Number.isSafeInteger(row.distinct_profiles) ||
+          row.distinct_profiles < 0 || row.distinct_profiles > row.count) {
+        throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+      }
+      seen.add(key);
+      dates.add(row.date);
+    }
+    if (dates.size !== data.days || [...dates].some(date =>
+        events.some(event => !seen.has(date + ':' + event)))) {
+      throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+    }
+    return data;
+  }
   const field = tab === 'users' ? 'users' : tab === 'redis' ? 'keys' : tab === 'databricks' ? 'rows' : null;
   if (!field || !data || !Array.isArray(data[field])) {
     throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
@@ -30,7 +61,7 @@ export function validateAdminResponse(tab, data) {
 }
 
 export function visibleAdminRecords(records, tab, source) {
-  if (!records || records.tab !== tab || ((tab === 'databricks' || tab === 'popularity') && records.source !== source)) {
+  if (!records || records.tab !== tab || ((tab === 'databricks' || tab === 'popularity' || tab === 'activity') && records.source !== source)) {
     return null;
   }
   return records.data;
