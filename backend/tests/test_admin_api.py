@@ -237,7 +237,8 @@ class AdminAPITests(unittest.TestCase):
 
             def execute(self, query):
                 statements.append(query)
-                self.index += 1
+                if query != "SET TIME ZONE 'UTC'":
+                    self.index += 1
 
             def fetchmany(self, limit):
                 self_limit = 10
@@ -276,14 +277,17 @@ class AdminAPITests(unittest.TestCase):
                          [{"label": "Indian", "count": 5}, {"label": "Italian", "count": 2}])
         self.assertEqual(result["dish_metric"], "recipe_open_events")
         self.assertEqual(result["cuisine_metric"], "recipe_view_events")
-        self.assertEqual(len(statements), 2)
-        self.assertTrue(all("INTERVAL 7 DAYS" in statement for statement in statements))
-        self.assertIn("default.user_clicks", statements[0])
-        self.assertIn("tracking_context IN", statements[0])
-        self.assertIn("default.app_user_events", statements[1])
-        self.assertIn("event_type = 'viewed'", statements[1])
+        self.assertEqual(len(statements), 3)
+        self.assertEqual(statements[0], "SET TIME ZONE 'UTC'")
+        self.assertTrue(all("date_sub(current_date(), 6)" in statement
+                            and "date_add(current_date(), 1)" in statement
+                            for statement in statements[1:]))
+        self.assertIn("default.user_clicks", statements[1])
+        self.assertIn("tracking_context IN", statements[1])
+        self.assertIn("default.app_user_events", statements[2])
+        self.assertIn("event_type = 'viewed'", statements[2])
         self.assertTrue(all("COUNT(*)" in statement and "LIMIT 10" in statement
-                            for statement in statements))
+                            for statement in statements[1:]))
         self.assertNotIn("username", response.text)
         self.assertNotIn("user_id", response.text)
 
@@ -567,6 +571,113 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(invalid.status_code, 503)
         self.assertEqual(unavailable.status_code, 503)
         self.assertNotIn("private secret", unavailable.text)
+
+    def test_analytics_quality_auth_windows_and_missing_configuration(self):
+        self.assertEqual(self.client.get("/api/admin/analytics-quality").status_code, 401)
+        headers = {"Authorization": f"Bearer {self.login()}"}
+        self.assertEqual(self.client.get(
+            "/api/admin/analytics-quality?days=8", headers=headers,
+        ).status_code, 422)
+        self.assertEqual(self.client.get(
+            "/api/admin/analytics-quality?days=7", headers=headers,
+        ).status_code, 503)
+
+    def test_analytics_quality_bounded_utc_metadata_and_empty_window(self):
+        from datetime import datetime, timezone
+        headers = {"Authorization": f"Bearer {self.login()}"}
+        statements = []
+
+        class FakeCursor:
+            index = 0
+            empty = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def execute(self, statement):
+                statements.append(statement)
+                if statement != "SET TIME ZONE 'UTC'":
+                    self.index += 1
+
+            def fetchmany(self, limit):
+                self_limit = limit
+                assert self_limit == 2
+                if self.empty:
+                    return [(0, None, None)]
+                return ([(9, datetime(2026, 11, 25, 20, 30, tzinfo=timezone.utc), 3)]
+                        if self.index % 2 else
+                        [(5, datetime(2026, 11, 25, 20, 31, tzinfo=timezone.utc), 4)])
+
+        cursor = FakeCursor()
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def cursor(self):
+                return cursor
+
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(self.data_layer, "DB_HOST", "mock-host"):
+                with patch.object(self.data_layer, "DB_PATH", "/sql"):
+                    with patch.object(self.data_layer, "DB_TOKEN", "mock-token"):
+                        response = self.client.get("/api/admin/analytics-quality?days=7", headers=headers)
+                        cursor.empty = True
+                        empty = self.client.get("/api/admin/analytics-quality?days=30", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["profile_event_count"], 9)
+        self.assertEqual(result["recipe_click_count"], 5)
+        self.assertEqual(result["recipe_open_event_count"], 4)
+        self.assertEqual(result["legacy_or_missing_profile_id_events"], 3)
+        self.assertEqual(result["latest_profile_event_utc"], "2026-11-25T20:30:00Z")
+        self.assertEqual(statements[0], "SET TIME ZONE 'UTC'")
+        self.assertIn("date_sub(current_date(), 6)", statements[1])
+        self.assertIn("date_add(current_date(), 1)", statements[2])
+        self.assertNotIn("user_id", response.text)
+        self.assertNotIn("username", response.text)
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(empty.json()["profile_event_count"], 0)
+        self.assertIsNone(empty.json()["latest_profile_event_utc"])
+
+    def test_analytics_quality_warehouse_failure_is_not_false_zero(self):
+        headers = {"Authorization": f"Bearer {self.login()}"}
+        class FakeCursor:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, statement):
+                raise RuntimeError("private connection secret")
+        class FakeConnection:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def cursor(self):
+                return FakeCursor()
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(self.data_layer, "DB_HOST", "mock-host"):
+                with patch.object(self.data_layer, "DB_PATH", "/sql"):
+                    with patch.object(self.data_layer, "DB_TOKEN", "mock-token"):
+                        failure = self.client.get("/api/admin/analytics-quality?days=90", headers=headers)
+        self.assertEqual(failure.status_code, 503)
+        self.assertNotIn("private connection secret", failure.text)
 
     def test_databricks_table_is_allowlisted_and_absent_service_safe(self):
         token = self.login()
