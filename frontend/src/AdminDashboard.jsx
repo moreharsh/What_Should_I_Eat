@@ -39,7 +39,7 @@ function Table({ rows = [], columns }) {
     <div className="overflow-x-auto rounded-xl border border-slate-200">
       <table className="w-full min-w-[650px] text-left text-xs">
         <thead className="bg-slate-100 text-slate-600"><tr>
-          {columns.map(col => <th key={col} className="px-3 py-3 font-semibold">{col.replaceAll('_', ' ')}</th>)}
+          {columns.map(col => <th key={col} scope="col" className="px-3 py-3 font-semibold">{col.replaceAll('_', ' ')}</th>)}
         </tr></thead>
         <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-slate-100">
           {columns.map(col => <td key={col} className="max-w-[250px] break-words px-3 py-3 align-top text-slate-700">
@@ -405,6 +405,12 @@ export default function AdminDashboard() {
             rows={visibleRecords.top_dishes}/>
           <PopularityBars title="Most viewed cuisines" caption="Viewed events from app_user_events; not saved or tried preferences."
             rows={visibleRecords.top_cuisines}/>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section aria-label="Recipe opens data"><h3 className="mb-2 text-sm font-semibold">Recipe opens · events</h3>
+            <Table rows={visibleRecords.top_dishes} columns={['label', 'count']}/></section>
+          <section aria-label="Cuisine views data"><h3 className="mb-2 text-sm font-semibold">Cuisine views · events</h3>
+            <Table rows={visibleRecords.top_cuisines} columns={['label', 'count']}/></section>
         </div>
       </>}
       {!loading && visibleRecords && activeTab === 'activity' && <>
