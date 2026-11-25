@@ -127,19 +127,23 @@ def _visible_recipe_keys(user_id: str, label: str, limit: int = 30):
 @router.get("/users")
 def users(admin=Depends(require_admin)):
     records = []
-    # Bounded results: SCAN not KEYS, and never enumerate session tokens.
-    for key in redis_client.scan_iter(match="profile:username:v1:*", count=100):
+    # Both historical and new admin-only registries. A registry entry must
+    # never function as a login credential or grant access to user histories.
+    seen = set()
+    for pattern in ("profile:registry:v2:*", "profile:username:v1:*"):
+      for key in redis_client.scan_iter(match=pattern, count=100):
         if len(records) >= MAX_PROFILES:
             break
         try:
             identity = json.loads(redis_client.get(key) or "{}")
             user_id = str(identity.get("user_id", ""))
             username = str(identity.get("username", ""))[:64]
-            if not USER_ID_PATTERN.fullmatch(user_id) or not username:
+            if not USER_ID_PATTERN.fullmatch(user_id) or not username or user_id in seen:
                 continue
             viewed = _visible_recipe_keys(user_id, "viewed")
             saved = _visible_recipe_keys(user_id, "saved")
             tried = _visible_recipe_keys(user_id, "tried")
+            seen.add(user_id)
             records.append({
                 "user_id": user_id,
                 "username": username,
@@ -155,7 +159,7 @@ def users(admin=Depends(require_admin)):
         except (ValueError, TypeError, AttributeError):
             continue
     return {"users": sorted(records, key=lambda user: user["username"].casefold()),
-            "limit": MAX_PROFILES, "note": "Recent profile registry only; older orphaned sessions are excluded."}
+            "limit": MAX_PROFILES, "note": "Recent anonymous profile registry and legacy profiles; expired entries may be omitted."}
 
 
 @router.get("/redis")
