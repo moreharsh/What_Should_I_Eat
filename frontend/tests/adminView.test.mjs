@@ -172,3 +172,10 @@ test('engagement validates action rates, undo counts and stale views', () => {
     { ...noViews, summary: { ...noViews.summary, save_to_view_action_percent: 0 } },
   ]) assert.throws(() => validateAdminResponse('engagement', bad), /unexpected response/);
 });
+
+test('engagement window selector and response visibility are wired in dashboard', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/AdminDashboard.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const visibleRecords = visibleAdminRecords\(records, activeTab, \(activeTab === 'popularity' \|\| activeTab === 'activity' \|\| activeTab === 'engagement'\)/);
+  assert.match(source, /\{\(activeTab === 'popularity' \|\| activeTab === 'activity' \|\| activeTab === 'engagement'\) && <label/);
+});
