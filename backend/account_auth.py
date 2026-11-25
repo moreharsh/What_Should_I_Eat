@@ -72,6 +72,15 @@ def _rate_limit(request, operation, username, limit=10):
         redis_client.expire(key, RATE_LIMIT_SECONDS)
     if attempts > limit:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    # A second IP-only bound prevents rotating usernames to avoid throttling.
+    broad_key = "account:attempts:v1:" + hashlib.sha256(
+        f"{operation}|{source}".encode()
+    ).hexdigest()
+    broad_attempts = redis_client.incr(broad_key)
+    if broad_attempts == 1:
+        redis_client.expire(broad_key, RATE_LIMIT_SECONDS)
+    if broad_attempts > (20 if operation == "register" else 60):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
 
 
 def _new_recovery_code():
@@ -168,6 +177,8 @@ def login(body: AccountCredentials, request: Request):
         raise HTTPException(status_code=401, detail="Invalid username or password") from None
     identity = {"user_id": account["user_id"], "username": account["username"],
                 "account_type": "registered"}
+    redis_client.setex("profile:registry:v2:" + account["user_id"],
+                       90 * 86400, json.dumps(identity))
     return _session(identity)
 
 
