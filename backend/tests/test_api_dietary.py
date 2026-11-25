@@ -1,5 +1,6 @@
 """FastAPI route regression tests with in-memory Redis and stubbed external agents."""
 import importlib.util
+from uuid import uuid4
 import json
 import sys
 import types
@@ -116,7 +117,7 @@ def load_app():
     def create_profile(username):
         if len(username) < 3 or len(username) > 24:
             raise ValueError("Invalid username")
-        profile = {"user_id": f"session-{username}", "username": username, "token": f"token-{username}"}
+        profile = {"user_id": str(uuid4()), "username": username, "token": str(uuid4())}
         redis.setex(f"profile:session:{profile['token']}", 86400, json.dumps(profile))
         return profile
     def get_profile(authorization: str | None = Header(default=None)):
@@ -284,30 +285,37 @@ class DietaryAPITests(unittest.TestCase):
         self.assertEqual(other.status_code, 200, other.text)
         self.assertEqual(len(other.json()["previously_tried"]), 0)
 
-    def test_viewed_only_recipe_appears_in_dashboard_after_returning_to_profile(self):
+    def test_viewed_history_persists_with_token_but_not_username(self):
         first_login = self.client.post("/api/session", json={"username": "returning_cook"})
         self.assertEqual(first_login.status_code, 200)
-        self.client.headers["Authorization"] = f"Bearer {first_login.json()['token']}"
-        recipe_response = self.post_recipe(["vegan"])
-        self.assertEqual(recipe_response.status_code, 200, recipe_response.text)
+        original_token = first_login.json()["token"]
+        self.client.headers["Authorization"] = f"Bearer {original_token}"
+        self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)
         first_dashboard = self.client.post("/api/menu-dashboard", json={
             "cuisine": "Italian", "dietary_restrictions": ["vegan"],
         })
-        self.assertEqual(first_dashboard.status_code, 200)
         self.assertEqual(len(first_dashboard.json()["viewed_recipes"]), 1)
         self.assertEqual(first_dashboard.json()["saved_favorites"], [])
         self.assertEqual(first_dashboard.json()["previously_tried"], [])
 
-        self.assertEqual(self.client.delete("/api/session").status_code, 200)
-        second_login = self.client.post("/api/session", json={"username": "returning_cook"})
-        self.assertEqual(second_login.status_code, 200)
-        self.client.headers["Authorization"] = f"Bearer {second_login.json()['token']}"
+        another_login = self.client.post("/api/session", json={"username": "returning_cook"})
+        self.assertEqual(another_login.status_code, 200)
+        self.assertNotEqual(another_login.json()["user_id"], first_login.json()["user_id"])
+        self.client.headers["Authorization"] = f"Bearer {another_login.json()['token']}"
         second_dashboard = self.client.post("/api/menu-dashboard", json={
             "cuisine": "Italian", "dietary_restrictions": ["vegan"],
         })
         self.assertEqual(second_dashboard.status_code, 200)
-        self.assertTrue(second_dashboard.json()["has_history"])
-        self.assertEqual(second_dashboard.json()["viewed_recipes"][0]["dish_name"], "Pasta")
+        self.assertEqual(second_dashboard.json()["viewed_recipes"], [])
+        self.client.headers["Authorization"] = f"Bearer {original_token}"
+        retained = self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+        })
+        self.assertEqual(len(retained.json()["viewed_recipes"]), 1)
+        self.assertEqual(self.client.delete("/api/session").status_code, 200)
+        self.assertEqual(self.client.post("/api/menu-dashboard", json={
+            "cuisine": "Italian", "dietary_restrictions": ["vegan"],
+        }).status_code, 401)
 
     def test_viewed_history_is_not_exposed_to_another_user(self):
         self.assertEqual(self.post_recipe(["vegan"]).status_code, 200)

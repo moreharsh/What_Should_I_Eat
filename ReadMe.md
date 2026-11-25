@@ -10,7 +10,7 @@ A full-stack recipe discovery application. Pick a cuisine and dietary preference
 
 **Admin UI:** https://what-should-i-eat-mu.vercel.app/admin
 
-> **Demo identity warning:** Recipe profiles use usernames **without passwords**. Anyone who enters the same username can access that profile's saved and tried dishes. Do not use this as private or production user authentication.
+> **Anonymous session model:** Usernames are display names, not login credentials. Each new session receives an independent UUID and secret bearer token, so entering another person's username cannot open their history. Existing browser tokens continue until expiration or logout. This is not a password-protected or recoverable cross-device account; losing the token means losing access to that session's prior history. Avoid storing sensitive data.
 
 ## How it works
 
@@ -20,7 +20,7 @@ React / Vite frontend (Vercel)
     v
 FastAPI endpoints (Render) ---------------------> Redis
     |                                              | recipe:v2:* cache
-    | POST /api/menu                               | profile:username:v1:*
+    | POST /api/menu                               | profile:registry:v2:* (admin-only index)
     |   -> Gemini Flash -> Gemini Flash Lite       | profile:session:* (TTL)
     |   -> five validated choices                  | user:* viewed/saved/tried sets
     |
@@ -158,7 +158,7 @@ Content-Type: application/json
 {"username":"home_chef"}
 ```
 
-Returns `user_id`, `username` and `token`. Usernames accept 3–24 letters, digits or underscores. `GET /api/session` checks the current bearer token; `DELETE /api/session` revokes it. Anyone can reuse a username, so **this is not secure login**.
+Returns `user_id`, `username` and `token`. Usernames accept 3–24 letters, digits or underscores. `GET /api/session` checks the current bearer token; `DELETE /api/session` revokes it. Creating a new session always creates a new UUID, even when the display name already exists. A valid bearer token is required to resume an existing session; a username alone cannot recover it. Browser local storage holds the token, and the Redis session expires after 30 days. Logging out or clearing storage prevents recovery of the previous session; users can still choose the same display name for a new, empty profile.
 
 ### Generate five menu suggestions (no session required)
 
@@ -268,12 +268,12 @@ Quality workflows also run Python syntax/lint checks, Git whitespace/conflict-ma
 | Gemini 502 | Confirm server-side `GEMINI_API_KEY`, model availability, quota and backend logs; Ollama is optional for recipes only |
 | Admin login 503 | Configure a 16+ character `ADMIN_PASSWORD` on backend, then restart |
 | Databricks 503 / table not found | Start the SQL warehouse, verify HTTP Path/catalog permissions and create required tables in the correct catalog/schema |
-| Profile appears to belong to someone else | Username-only demo profiles are shared by anyone entering the username; use unique test names, do not store private data |
+| Profile history disappears after logout or expiration | Anonymous sessions cannot be recovered from a username. Keep the existing session token on the same browser; use a new profile after logout/expiry |
 | Media image/video missing | Optional API keys, provider quota and network responses; recipe text should remain available |
 
 ## Security and limitations
 
-- **No passwords for recipe profiles:** do not use for sensitive personal data. Replace with managed authentication before real user onboarding.
+- **Anonymous sessions, not account recovery:** usernames are display names and never grant access to an earlier profile. Bearer-token possession grants access, but no password reset, cross-device recovery, or identity verification exists. Use managed account authentication before collecting sensitive personal information.
 - The admin view uses a single shared password, not full role-based access control or SSO.
 - Redis cache and profile records currently have no general retention policy; demo session tokens expire, but not all profile/history records do.
 - Generated recipes are **not verified for allergens, ingredient labels, cross-contact or dietary safety**. Check ingredients independently.
