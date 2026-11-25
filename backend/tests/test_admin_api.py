@@ -156,6 +156,35 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(user["viewed"][0]["dish_name"], "Dal")
         self.assertNotIn("private-session-token", response.text)
 
+    def test_new_anonymous_registry_is_visible_only_to_admin(self):
+        uid = "46c08243-32a4-4b57-95a5-b96ca9b101ec"
+        self.redis.values[f"profile:registry:v2:{uid}"] = json.dumps({
+            "user_id": uid, "username": "chef_guest",
+        })
+        self.redis.values[f"profile:session:private-session-token"] = json.dumps({
+            "user_id": uid, "username": "chef_guest",
+        })
+        self.assertEqual(self.client.get("/api/admin/users").status_code, 401)
+        token = self.login()
+        response = self.client.get("/api/admin/users", headers={
+            "Authorization": f"Bearer {token}",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["users"][0]["user_id"], uid)
+        self.assertEqual(response.json()["users"][0]["username"], "chef_guest")
+        self.assertNotIn("private-session-token", response.text)
+
+    def test_new_and_old_registry_deduplicate_profile_id(self):
+        uid = "46c08243-32a4-4b57-95a5-b96ca9b101ec"
+        identity = json.dumps({"user_id": uid, "username": "old_name"})
+        self.redis.values[f"profile:registry:v2:{uid}"] = identity
+        self.redis.values["profile:username:v1:old_name"] = identity
+        token = self.login()
+        response = self.client.get("/api/admin/users", headers={
+            "Authorization": f"Bearer {token}",
+        })
+        self.assertEqual(len(response.json()["users"]), 1)
+
     def test_redis_inspector_hides_auth_keys_and_values(self):
         token = self.login()
         self.redis.values["recipe:v2:abc"] = '{"secret_recipe_body":"not returned"}'
