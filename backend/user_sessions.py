@@ -4,6 +4,7 @@ Usernames are display names only: knowing one never grants access to another
 profile. Returning visitors must keep their existing device session token.
 This is not password or cross-device account authentication.
 """
+import hashlib
 import json
 import re
 import secrets
@@ -43,7 +44,9 @@ def get_profile(authorization: str | None = Header(default=None)) -> dict:
     token = authorization[7:]
     if not token or len(token) > 256:
         raise HTTPException(status_code=401, detail="Invalid session")
-    stored = redis_client.get(f"profile:session:{token}")
+    stored = redis_client.get(
+        "profile:session:v2:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+    ) or redis_client.get(f"profile:session:{token}")
     if not stored:
         raise HTTPException(status_code=401, detail="Session expired. Start a new profile")
     try:
@@ -58,10 +61,17 @@ def get_profile(authorization: str | None = Header(default=None)) -> dict:
         user_id = profile.get("user_id")
         if not isinstance(user_id, str) or not user_id or len(user_id) > 128:
             raise ValueError("Invalid profile")
-        return {"user_id": user_id, "username": profile["username"]}
+        return {"user_id": user_id, "username": profile["username"],
+                "account_type": profile.get("account_type", "guest")}
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(status_code=401, detail="Invalid session") from exc
 
 
 def revoke_profile(token: str):
+    if not token or len(token) > 256:
+        return
+    redis_client.delete(
+        "profile:session:v2:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+    )
+    # Keep legacy anonymous sessions revocable during rollout.
     redis_client.delete(f"profile:session:{token}")
