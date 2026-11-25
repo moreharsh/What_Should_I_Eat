@@ -394,7 +394,7 @@ async def daily_activity_trends(days: int = 30, admin=Depends(require_admin)):
         for date_value, event_type, event_count, distinct_profiles in raw_rows:
             date_label = date_value.isoformat() if hasattr(date_value, "isoformat") else str(date_value)
             # Verify the response shape before sending metrics to the browser.
-            if (not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", date_label)
+            if (not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_label)
                     or event_type not in ACTIVITY_EVENTS
                     or (date_label, event_type) in seen):
                 raise ValueError("Invalid daily activity bucket")
