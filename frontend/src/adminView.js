@@ -114,3 +114,23 @@ export function redisHeartbeatRows(data) {
     }).format(date),
   }];
 }
+
+/** Validate an aggregate-only warehouse coverage report, never raw events. */
+export function validateAnalyticsQuality(data) {
+  const validCount = n => Number.isSafeInteger(n) && n >= 0;
+  const validTime = value => value === null ||
+    (typeof value === 'string' && /^\\d{4}-\\d{2}-\\d{2}T/.test(value) &&
+      value.endsWith('Z') && Number.isFinite(Date.parse(value)));
+  if (!data || ![7, 30, 90].includes(data.days) || data.timezone !== 'UTC' ||
+      data.window !== 'utc_calendar_days_including_today' ||
+      !validCount(data.profile_event_count) || !validCount(data.recipe_click_count) ||
+      !validCount(data.recipe_open_event_count) ||
+      !validCount(data.legacy_or_missing_profile_id_events) ||
+      data.legacy_or_missing_profile_id_events > data.profile_event_count ||
+      data.recipe_open_event_count > data.recipe_click_count ||
+      !validTime(data.latest_profile_event_utc) ||
+      !validTime(data.latest_recipe_click_utc)) {
+    throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+  }
+  return data;
+}
