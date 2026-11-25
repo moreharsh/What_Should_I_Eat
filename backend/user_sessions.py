@@ -61,8 +61,13 @@ def get_profile(authorization: str | None = Header(default=None)) -> dict:
         user_id = profile.get("user_id")
         if not isinstance(user_id, str) or not user_id or len(user_id) > 128:
             raise ValueError("Invalid profile")
+        account_type = profile.get("account_type", "guest")
+        if account_type == "registered":
+            epoch = redis_client.get("account:epoch:v1:" + user_id)
+            if int(epoch or 0) != profile.get("epoch"):
+                raise ValueError("Revoked account session")
         return {"user_id": user_id, "username": profile["username"],
-                "account_type": profile.get("account_type", "guest")}
+                "account_type": account_type}
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(status_code=401, detail="Invalid session") from exc
 
