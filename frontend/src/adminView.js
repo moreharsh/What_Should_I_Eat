@@ -119,7 +119,7 @@ export function redisHeartbeatRows(data) {
 export function validateAnalyticsQuality(data) {
   const validCount = n => Number.isSafeInteger(n) && n >= 0;
   const validTime = value => value === null ||
-    (typeof value === 'string' && /^\\d{4}-\\d{2}-\\d{2}T/.test(value) &&
+    (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) &&
       value.endsWith('Z') && Number.isFinite(Date.parse(value)));
   if (!data || ![7, 30, 90].includes(data.days) || data.timezone !== 'UTC' ||
       data.window !== 'utc_calendar_days_including_today' ||
