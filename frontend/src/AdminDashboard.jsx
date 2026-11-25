@@ -222,7 +222,7 @@ export default function AdminDashboard() {
 
   // Tab buttons update immediately, before effects can clear the previous
   // response. Never try to render that previous response under a new tab.
-  const visibleRecords = visibleAdminRecords(records, activeTab, (activeTab === 'popularity' || activeTab === 'activity') ? String(days) : source);
+  const visibleRecords = visibleAdminRecords(records, activeTab, (activeTab === 'popularity' || activeTab === 'activity' || activeTab === 'engagement') ? String(days) : source);
 
   if (!verified) {
     return <div className="mx-auto max-w-md px-4 py-16">
@@ -287,7 +287,7 @@ export default function AdminDashboard() {
           <option value="events">Profile activity (app_user_events)</option>
           <option value="clicks">Recipe interactions (user_clicks)</option>
         </select>}
-        {(activeTab === 'popularity' || activeTab === 'activity') && <label className="flex items-center gap-2 text-sm text-slate-600">
+        {(activeTab === 'popularity' || activeTab === 'activity' || activeTab === 'engagement') && <label className="flex items-center gap-2 text-sm text-slate-600">
           Window
           <select aria-label="Analytics time window" value={days} onChange={e => setDays(Number(e.target.value))}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
