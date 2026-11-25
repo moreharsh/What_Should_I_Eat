@@ -80,12 +80,12 @@ def create_app():
         spec.loader.exec_module(module)
     app = FastAPI()
     app.include_router(module.router)
-    return TestClient(app), redis
+    return TestClient(app), redis, data_layer
 
 
 class AdminAPITests(unittest.TestCase):
     def setUp(self):
-        self.client, self.redis = create_app()
+        self.client, self.redis, self.data_layer = create_app()
         self.env = patch.dict(os.environ, {"ADMIN_PASSWORD": "random-password-very-long-123"})
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -207,6 +207,135 @@ class AdminAPITests(unittest.TestCase):
             response = self.client.get("/api/admin/redis-heartbeat", headers=headers)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private Redis URI", response.text)
+
+
+    def test_popularity_requires_admin_and_allowlisted_window(self):
+        self.assertEqual(self.client.get("/api/admin/popularity").status_code, 401)
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+        self.assertEqual(self.client.get(
+            "/api/admin/popularity?days=31", headers=headers
+        ).status_code, 422)
+        self.assertEqual(self.client.get(
+            "/api/admin/popularity?days=7", headers=headers
+        ).status_code, 503)
+
+    def test_popularity_aggregates_two_fixed_sources_without_user_data(self):
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+        statements = []
+
+        class FakeCursor:
+            def __init__(self):
+                self.index = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def execute(self, query):
+                statements.append(query)
+                self.index += 1
+
+            def fetchmany(self, limit):
+                self_limit = 10
+                assert limit == self_limit
+                return ([("Dal", 8), ("Pasta", 3)]
+                        if self.index == 1 else [("Indian", 5), ("Italian", 2)])
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def cursor(self):
+                return FakeCursor()
+
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        databricks = types.ModuleType("databricks")
+        databricks.sql = sql
+        data = self.data_layer
+        with patch.dict(sys.modules, {"databricks": databricks, "databricks.sql": sql}):
+            with patch.object(data, "DB_HOST", "mock-host"):
+                with patch.object(data, "DB_PATH", "/sql"):
+                    with patch.object(data, "DB_TOKEN", "mock-token"):
+                        response = self.client.get("/api/admin/popularity?days=7", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["days"], 7)
+        self.assertEqual(result["timezone"], "UTC")
+        self.assertEqual(result["top_dishes"],
+                         [{"label": "Dal", "count": 8}, {"label": "Pasta", "count": 3}])
+        self.assertEqual(result["top_cuisines"],
+                         [{"label": "Indian", "count": 5}, {"label": "Italian", "count": 2}])
+        self.assertEqual(result["dish_metric"], "recipe_open_events")
+        self.assertEqual(result["cuisine_metric"], "recipe_view_events")
+        self.assertEqual(len(statements), 2)
+        self.assertTrue(all("INTERVAL 7 DAYS" in statement for statement in statements))
+        self.assertIn("default.user_clicks", statements[0])
+        self.assertIn("tracking_context IN", statements[0])
+        self.assertIn("default.app_user_events", statements[1])
+        self.assertIn("event_type = 'viewed'", statements[1])
+        self.assertTrue(all("COUNT(*)" in statement and "LIMIT 10" in statement
+                            for statement in statements))
+        self.assertNotIn("username", response.text)
+        self.assertNotIn("user_id", response.text)
+
+    def test_popularity_empty_rows_and_sql_failure_are_handled(self):
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        class FakeCursor:
+            fail = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def execute(self, statement):
+                if self.fail:
+                    raise RuntimeError("private Databricks connection info")
+
+            def fetchmany(self, limit):
+                return []
+
+        cursor = FakeCursor()
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def cursor(self):
+                return cursor
+
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        data = self.data_layer
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(data, "DB_HOST", "mock-host"):
+                with patch.object(data, "DB_PATH", "/sql"):
+                    with patch.object(data, "DB_TOKEN", "mock-token"):
+                        empty = self.client.get("/api/admin/popularity?days=90", headers=headers)
+                        cursor.fail = True
+                        failure = self.client.get("/api/admin/popularity?days=90", headers=headers)
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(empty.json()["top_dishes"], [])
+        self.assertEqual(empty.json()["top_cuisines"], [])
+        self.assertEqual(failure.status_code, 503)
+        self.assertNotIn("private Databricks", failure.text)
 
     def test_databricks_table_is_allowlisted_and_absent_service_safe(self):
         token = self.login()

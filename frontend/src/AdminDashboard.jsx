@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { redisHeartbeatRows, validateAdminResponse, visibleAdminRecords } from './adminView.js';
 import { adminErrorMessage } from './adminErrors.js';
-import { Activity, ArrowLeft, Clock3, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
+import { Activity, ArrowLeft, BarChart3, Clock3, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SESSION_KEY = 'recipe_admin_session';
@@ -50,6 +50,25 @@ function Table({ rows = [], columns }) {
   );
 }
 
+function PopularityBars({ title, caption, rows }) {
+  const maximum = Math.max(1, ...rows.map(row => row.count));
+  return <section aria-label={title} className="space-y-3 rounded-xl border border-slate-200 p-4">
+    <h3 className="font-bold text-slate-800">{title}</h3>
+    <p className="text-xs text-slate-500">{caption}</p>
+    {!rows.length ? <p role="status" className="text-sm text-slate-500">No matching activity in this period.</p>
+      : <ol className="space-y-3">{rows.map(row =>
+        <li key={row.label} className="space-y-1">
+          <div className="flex justify-between gap-3 text-sm">
+            <span className="break-words font-medium text-slate-700">{row.label}</span>
+            <span className="tabular-nums text-slate-700">{row.count.toLocaleString('en-US')} events</span>
+          </div>
+          <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-indigo-500" style={{ width: `${100 * row.count / maximum}%` }}/>
+          </div>
+        </li>)}</ol>}
+  </section>;
+}
+
 function RecipeList({ label, items = [] }) {
   return <div className="space-y-2">
     <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{label} ({items.length})</h4>
@@ -70,6 +89,7 @@ export default function AdminDashboard() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [activeTab, setActiveTab] = useState('users');
   const [source, setSource] = useState('events');
+  const [days, setDays] = useState(30);
   const [records, setRecords] = useState(null);
   const requestIdRef = useRef(0);
   const [loading, setLoading] = useState(false);
@@ -127,12 +147,13 @@ export default function AdminDashboard() {
     setError('');
     setRecords(null);
     try {
-      const path = activeTab === 'databricks' ? `/databricks?table=${source}`
+      const path = activeTab === 'popularity' ? `/popularity?days=${days}`
+        : activeTab === 'databricks' ? `/databricks?table=${source}`
         : activeTab === 'maintenance' ? '/redis-heartbeat' : `/${activeTab}`;
       const response = await adminRequest(path, { token });
       if (requestId !== requestIdRef.current) return;
       const data = validateAdminResponse(activeTab, response);
-      setRecords({ tab: activeTab, source, data });
+      setRecords({ tab: activeTab, source: activeTab === 'popularity' ? String(days) : source, data });
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unable to read admin data.';
@@ -141,7 +162,7 @@ export default function AdminDashboard() {
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [token, verified, activeTab, source, clearSession]);
+  }, [token, verified, activeTab, source, days, clearSession]);
 
   useEffect(() => {
     let active = true;
@@ -158,7 +179,7 @@ export default function AdminDashboard() {
 
   // Tab buttons update immediately, before effects can clear the previous
   // response. Never try to render that previous response under a new tab.
-  const visibleRecords = visibleAdminRecords(records, activeTab, source);
+  const visibleRecords = visibleAdminRecords(records, activeTab, activeTab === 'popularity' ? String(days) : source);
 
   if (!verified) {
     return <div className="mx-auto max-w-md px-4 py-16">
@@ -189,6 +210,7 @@ export default function AdminDashboard() {
   const tabs = [
     { id: 'users', label: 'Users & selections', icon: Users },
     { id: 'redis', label: 'Redis inspector', icon: HardDrive },
+    { id: 'popularity', label: 'Recipe popularity', icon: BarChart3 },
     { id: 'maintenance', label: 'Redis maintenance', icon: Clock3 },
     { id: 'databricks', label: 'Databricks events', icon: Database },
   ];
@@ -220,6 +242,15 @@ export default function AdminDashboard() {
           <option value="events">Profile activity (app_user_events)</option>
           <option value="clicks">Recipe interactions (user_clicks)</option>
         </select>}
+        {activeTab === 'popularity' && <label className="flex items-center gap-2 text-sm text-slate-600">
+          Window
+          <select aria-label="Popularity time window" value={days} onChange={e => setDays(Number(e.target.value))}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+          </select>
+        </label>}
         <button onClick={loadTab} disabled={loading} className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50">
           <RefreshCcw size={15}/> Refresh
         </button>
@@ -262,6 +293,18 @@ export default function AdminDashboard() {
           A recent timestamp confirms a Redis write, not that every scheduled job will succeed.
           Check GitHub Actions for upcoming run results.
         </p>
+      </>}
+      {!loading && visibleRecords && activeTab === 'popularity' && <>
+        <p className="text-xs text-slate-500">
+          Last {visibleRecords.days} days · UTC · Event counts, not unique users.
+          Includes the top 10 values per chart, with alphabetical tie-breaks.
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <PopularityBars title="Most opened recipes" caption="Recipe opens from user_clicks (cache hits and generated recipes)."
+            rows={visibleRecords.top_dishes}/>
+          <PopularityBars title="Most viewed cuisines" caption="Viewed events from app_user_events; not saved or tried preferences."
+            rows={visibleRecords.top_cuisines}/>
+        </div>
       </>}
       {!loading && visibleRecords && activeTab === 'databricks' && <>
         <p className="text-xs text-slate-500">Most recent {visibleRecords.limit} entries, with sensitive recipe payloads and credentials excluded.</p>

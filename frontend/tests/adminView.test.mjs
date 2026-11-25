@@ -70,3 +70,29 @@ test('reject invalid or unexpected heartbeat status payloads', () => {
     assert.throws(() => validateAdminResponse('maintenance', data), /unexpected response/);
   }
 });
+
+test('popularity payload validates windows, bounded counts and tab isolation', () => {
+  const data = {
+    days: 30,
+    timezone: 'UTC',
+    dish_metric: 'recipe_open_events',
+    cuisine_metric: 'recipe_view_events',
+    top_dishes: [{ label: 'Dal', count: 8 }],
+    top_cuisines: [{ label: 'Indian', count: 5 }],
+  };
+  assert.deepEqual(validateAdminResponse('popularity', data), data);
+  assert.deepEqual(validateAdminResponse('popularity', { ...data, top_dishes: [] }).top_dishes, []);
+  const old = { tab: 'popularity', source: '30', data };
+  assert.equal(visibleAdminRecords(old, 'popularity', '7'), null);
+  assert.equal(visibleAdminRecords(old, 'redis', '30'), null);
+  assert.deepEqual(visibleAdminRecords(old, 'popularity', '30'), data);
+  for (const bad of [
+    { ...data, days: 31 },
+    { ...data, timezone: 'local' },
+    { ...data, top_dishes: [{ label: 'Dal', count: -1 }] },
+    { ...data, top_dishes: [{ label: 'Dal', count: 2.2 }] },
+    { ...data, top_cuisines: new Array(11).fill({ label: 'x', count: 1 }) },
+    { ...data, dish_metric: 'unique_people' },
+    null,
+  ]) assert.throws(() => validateAdminResponse('popularity', bad), /unexpected response/);
+});
