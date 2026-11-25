@@ -86,7 +86,8 @@ def _code_hash(code):
 def _session(identity):
     token = secrets.token_urlsafe(36)
     key = "profile:session:v2:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
-    redis_client.setex(key, SESSION_TTL_SECONDS, json.dumps(identity))
+    epoch = int(redis_client.get("account:epoch:v1:" + identity["user_id"]) or 0)
+    redis_client.setex(key, SESSION_TTL_SECONDS, json.dumps({**identity, "epoch": epoch}))
     return {**identity, "token": token}
 
 
@@ -190,7 +191,9 @@ def recover(body: RecoverCredentials, request: Request):
     """
     if redis_client.eval(script, 1, key, json.dumps(account), json.dumps(updated)) != 1:
         raise HTTPException(status_code=409, detail="Recovery code already used; try again")
-    # Existing sessions are not globally revoked by this minimal recovery flow.
+    # Incrementing the generation invalidates all previously issued account
+    # bearer sessions without scanning tokens or exposing their Redis keys.
+    redis_client.incr("account:epoch:v1:" + account["user_id"])
     return {"ok": True, "recovery_code": next_code}
 
 
