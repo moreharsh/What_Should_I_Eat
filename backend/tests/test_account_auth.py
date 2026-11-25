@@ -34,16 +34,16 @@ class RedisFake:
     def delete(self, key):
         return int(self.values.pop(key, None) is not None)
 
-    def eval(self, script, nkeys, *args):
-        keys, values = args[:nkeys], args[nkeys:]
-        if nkeys == 3:
+    def eval(self, script, key_count, *args):
+        keys, values = args[:key_count], args[key_count:]
+        if key_count == 3:
             if any(key in self.values for key in keys):
                 return 0
             self.values[keys[0]] = values[0]
             self.values[keys[1]] = values[1]
             self.values[keys[2]] = values[0]
             return 1
-        if nkeys == 1:
+        if key_count == 1:
             if self.values.get(keys[0]) != values[0]:
                 return 0
             self.values[keys[0]] = values[1]
