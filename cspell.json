@@ -81,6 +81,7 @@
     "qwen",
     "compileall",
     "unlinted",
-    "venv"
+    "venv",
+    "RLIKE"
   ]
 }
