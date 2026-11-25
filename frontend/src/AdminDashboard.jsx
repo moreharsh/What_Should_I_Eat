@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { redisHeartbeatRows, validateAdminResponse, visibleAdminRecords } from './adminView.js';
+import { redisHeartbeatRows, validateAdminResponse, validateAnalyticsQuality, visibleAdminRecords } from './adminView.js';
 import { adminErrorMessage } from './adminErrors.js';
 import { Activity, ArrowLeft, BarChart3, Clock3, Database, HardDrive, LockKeyhole, LogOut, RefreshCcw, ShieldCheck, Users } from 'lucide-react';
 
@@ -7,13 +7,14 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SESSION_KEY = 'recipe_admin_session';
 
 /** @param {string} path
- * @param {{token?: string, method?: string, body?: object}} [options]
+ * @param {{token?: string, method?: string, body?: object, signal?: AbortSignal}} [options]
  */
-async function adminRequest(path, { token = '', method = 'GET', body } = {}) {
+async function adminRequest(path, { token = '', method = 'GET', body, signal } = {}) {
   let response;
   try {
     response = await fetch(`${API}/api/admin${path}`, {
       method,
+      ...(signal ? { signal } : {}),
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -38,7 +39,7 @@ function Table({ rows = [], columns }) {
     <div className="overflow-x-auto rounded-xl border border-slate-200">
       <table className="w-full min-w-[650px] text-left text-xs">
         <thead className="bg-slate-100 text-slate-600"><tr>
-          {columns.map(col => <th key={col} className="px-3 py-3 font-semibold">{col.replaceAll('_', ' ')}</th>)}
+          {columns.map(col => <th key={col} scope="col" className="px-3 py-3 font-semibold">{col.replaceAll('_', ' ')}</th>)}
         </tr></thead>
         <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-slate-100">
           {columns.map(col => <td key={col} className="max-w-[250px] break-words px-3 py-3 align-top text-slate-700">
@@ -133,15 +134,23 @@ export default function AdminDashboard() {
   const [activityEvent, setActivityEvent] = useState('viewed');
   const [records, setRecords] = useState(null);
   const requestIdRef = useRef(0);
+  const analyticsAbortRef = useRef(null);
+  const qualityCacheRef = useRef(new Map());
+  const [quality, setQuality] = useState(null);
+  const [qualityError, setQualityError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const clearSession = useCallback(() => {
     requestIdRef.current += 1;
+    analyticsAbortRef.current?.abort();
     sessionStorage.removeItem(SESSION_KEY);
     setToken('');
     setVerified(false);
     setRecords(null);
+    setQuality(null);
+    setQualityError('');
+    qualityCacheRef.current.clear();
     setPassword('');
   }, []);
 
@@ -181,22 +190,44 @@ export default function AdminDashboard() {
     clearSession();
   };
 
-  const loadTab = useCallback(async () => {
+  const loadTab = useCallback(async (force = false) => {
     if (!token || !verified) return;
     const requestId = ++requestIdRef.current;
+    analyticsAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyticsAbortRef.current = controller;
     setLoading(true);
     setError('');
     setRecords(null);
+    setQuality(null);
+    setQualityError('');
     try {
       const path = activeTab === 'engagement' ? `/engagement?days=${days}`
         : activeTab === 'activity' ? `/activity-trends?days=${days}`
         : activeTab === 'popularity' ? `/popularity?days=${days}`
         : activeTab === 'databricks' ? `/databricks?table=${source}`
         : activeTab === 'maintenance' ? '/redis-heartbeat' : `/${activeTab}`;
-      const response = await adminRequest(path, { token });
+      const response = await adminRequest(path, { token, signal: controller.signal });
       if (requestId !== requestIdRef.current) return;
       const data = validateAdminResponse(activeTab, response);
       setRecords({ tab: activeTab, source: (activeTab === 'popularity' || activeTab === 'activity' || activeTab === 'engagement') ? String(days) : source, data });
+      if (['popularity', 'activity', 'engagement'].includes(activeTab)) {
+        const cached = qualityCacheRef.current.get(days);
+        if (!force && cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) {
+          setQuality(cached);
+        } else {
+          try {
+            const metadata = validateAnalyticsQuality(await adminRequest(`/analytics-quality?days=${days}`, { token, signal: controller.signal }));
+            if (requestId !== requestIdRef.current) return;
+            const fresh = { ...metadata, fetchedAt: Date.now() };
+            qualityCacheRef.current.set(days, fresh);
+            setQuality(fresh);
+          } catch {
+            if (requestId !== requestIdRef.current) return;
+            setQualityError('Data freshness unavailable. Activity charts are shown separately; refresh to retry.');
+          }
+        }
+      }
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unable to read admin data.';
@@ -217,6 +248,7 @@ export default function AdminDashboard() {
     return () => {
       active = false;
       requestIdRef.current += 1;
+      analyticsAbortRef.current?.abort();
     };
   }, [loadTab]);
 
@@ -303,12 +335,29 @@ export default function AdminDashboard() {
             {EVENT_NAMES.map(event => <option key={event} value={event}>{event.replaceAll('_', ' ')}</option>)}
           </select>
         </label>}
-        <button onClick={loadTab} disabled={loading} className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50">
+        <button onClick={() => loadTab(true)} disabled={loading} className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50">
           <RefreshCcw size={15}/> Refresh
         </button>
       </div>
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {loading && <p role="status" className="text-sm text-slate-500">Loading admin data…</p>}
+      {['popularity', 'activity', 'engagement'].includes(activeTab) && !loading && qualityError &&
+        <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{qualityError}</p>}
+      {['popularity', 'activity', 'engagement'].includes(activeTab) && !loading && quality &&
+        visibleRecords && <section aria-label="Analytics data quality" className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+          <h3 className="text-sm font-semibold text-slate-800">Data freshness and coverage</h3>
+          <p className="text-xs text-slate-600">UTC calendar dates, including partial current day. Metadata fetched: {new Date(quality.fetchedAt).toLocaleString('en-US')}.
+            Counts reflect logged telemetry only; older/missing events cannot be recovered.</p>
+          <div className="grid gap-2 text-xs text-slate-700 sm:grid-cols-2">
+            <p>Profile activity events in period: <strong>{quality.profile_event_count.toLocaleString('en-US')}</strong></p>
+            <p>Recipe click rows in period: <strong>{quality.recipe_click_count.toLocaleString('en-US')}</strong> ({quality.recipe_open_event_count.toLocaleString('en-US')} tracked opens)</p>
+            <p>Latest profile event (UTC): <strong>{quality.latest_profile_event_utc ?? 'No recorded events'}</strong></p>
+            <p>Latest recipe click (UTC): <strong>{quality.latest_recipe_click_utc ?? 'No recorded clicks'}</strong></p>
+            <p className="sm:col-span-2">Legacy/missing or non-UUID profile IDs: <strong>{quality.legacy_or_missing_profile_id_events.toLocaleString('en-US')} events</strong>.
+              These count in event totals but not distinct UUID-profile metrics (including legacy harsh_123 IDs).</p>
+          </div>
+          <p className="text-xs text-slate-500">A warehouse outage shows an error, not a zero count. Successful empty queries mean no logged activity, not proof of no use.</p>
+        </section>}
       {!loading && visibleRecords && activeTab === 'users' && <>
         <p className="text-xs text-slate-500">Showing up to {visibleRecords.limit} registered usernames. Details represent the currently cached recipe variants.</p>
         <div className="grid gap-4">{visibleRecords.users.map(user =>
@@ -356,6 +405,12 @@ export default function AdminDashboard() {
             rows={visibleRecords.top_dishes}/>
           <PopularityBars title="Most viewed cuisines" caption="Viewed events from app_user_events; not saved or tried preferences."
             rows={visibleRecords.top_cuisines}/>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section aria-label="Recipe opens data"><h3 className="mb-2 text-sm font-semibold">Recipe opens · events</h3>
+            <Table rows={visibleRecords.top_dishes} columns={['label', 'count']}/></section>
+          <section aria-label="Cuisine views data"><h3 className="mb-2 text-sm font-semibold">Cuisine views · events</h3>
+            <Table rows={visibleRecords.top_cuisines} columns={['label', 'count']}/></section>
         </div>
       </>}
       {!loading && visibleRecords && activeTab === 'activity' && <>

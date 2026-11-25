@@ -256,7 +256,7 @@ POPULARITY_LIMIT = 10
 
 @router.get("/popularity")
 async def recipe_popularity(days: int = 30, admin=Depends(require_admin)):
-    """Last N UTC days, measured from the Databricks SQL warehouse clock.
+    """Last N UTC calendar dates, including today, from the warehouse clock.
 
     Dish selections are user_clicks recipe-open rows (cached or generated).
     Cuisine views are app_user_events viewed rows. Counts are event counts,
@@ -268,12 +268,13 @@ async def recipe_popularity(days: int = 30, admin=Depends(require_admin)):
         raise HTTPException(status_code=503, detail="Databricks is not configured")
 
     # days is allowlisted above, never an arbitrary SQL fragment or table name.
-    cutoff = f"CURRENT_TIMESTAMP() - INTERVAL {days} DAYS"
+    cutoff = f"CAST(date_sub(current_date(), {days - 1}) AS TIMESTAMP)"
+    upper = "CAST(date_add(current_date(), 1) AS TIMESTAMP)"
     queries = (
         (
             "SELECT dish_name AS label, COUNT(*) AS event_count "
             "FROM default.user_clicks "
-            f"WHERE timestamp >= {cutoff} "
+            f"WHERE timestamp >= {cutoff} AND timestamp < {upper} "
             "AND tracking_context IN ('CachedCuisine', 'DiscoveryFeed') "
             "AND dish_name IS NOT NULL AND TRIM(dish_name) <> '' "
             "GROUP BY dish_name ORDER BY event_count DESC, label ASC LIMIT 10"
@@ -281,7 +282,8 @@ async def recipe_popularity(days: int = 30, admin=Depends(require_admin)):
         (
             "SELECT cuisine AS label, COUNT(*) AS event_count "
             "FROM default.app_user_events "
-            f"WHERE event_at >= {cutoff} AND event_type = 'viewed' "
+            f"WHERE event_at >= {cutoff} AND event_at < {upper} "
+            "AND event_type = 'viewed' "
             "AND cuisine IS NOT NULL AND TRIM(cuisine) <> '' "
             "GROUP BY cuisine ORDER BY event_count DESC, label ASC LIMIT 10"
         ),
@@ -295,6 +297,7 @@ async def recipe_popularity(days: int = 30, admin=Depends(require_admin)):
         ) as conn:
             result = []
             with conn.cursor() as cursor:
+                cursor.execute("SET TIME ZONE 'UTC'")
                 for statement in queries:
                     cursor.execute(statement)
                     rows = cursor.fetchmany(POPULARITY_LIMIT)
@@ -509,3 +512,85 @@ async def recipe_engagement(days: int = 30, admin=Depends(require_admin)):
         "rows": rows,
         "summary": _engagement_summary(rows),
     }
+
+
+@router.get("/analytics-quality")
+async def analytics_quality(days: int = 30, admin=Depends(require_admin)):
+    """UTC aggregate-only source coverage and freshness for analytics tabs.
+
+    This is a reporting metadata query, not a validation of event completeness.
+    No user identifiers, raw records or unbounded result sets leave the server.
+    """
+    if days not in ANALYTICS_WINDOWS:
+        raise HTTPException(status_code=422, detail="Unsupported analytics window")
+    if not all([data_layer.DB_HOST, data_layer.DB_PATH, data_layer.DB_TOKEN]):
+        raise HTTPException(status_code=503, detail="Databricks is not configured")
+
+    lower = f"CAST(date_sub(current_date(), {days - 1}) AS TIMESTAMP)"
+    upper = "CAST(date_add(current_date(), 1) AS TIMESTAMP)"
+    statements = (
+        (
+            "SELECT COUNT(*) AS n, MAX(event_at) AS latest, "
+            f"SUM(CASE WHEN user_id IS NULL OR NOT(user_id RLIKE '{UUID_SQL_PATTERN}') "
+            "THEN 1 ELSE 0 END) AS legacy_or_missing "
+            "FROM default.app_user_events "
+            f"WHERE event_at >= {lower} AND event_at < {upper} "
+            "AND event_type IN ('profile_created','viewed','saved','unsaved','tried','untried')"
+        ),
+        (
+            "SELECT COUNT(*) AS n, MAX(timestamp) AS latest, "
+            "SUM(CASE WHEN tracking_context IN ('CachedCuisine','DiscoveryFeed') "
+            "THEN 1 ELSE 0 END) AS recipe_opens "
+            "FROM default.user_clicks "
+            f"WHERE timestamp >= {lower} AND timestamp < {upper}"
+        ),
+    )
+
+    def read():
+        from databricks import sql
+        with sql.connect(
+            server_hostname=data_layer.DB_HOST, http_path=data_layer.DB_PATH,
+            access_token=data_layer.DB_TOKEN,
+        ) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET TIME ZONE 'UTC'")
+                result = []
+                for statement in statements:
+                    cursor.execute(statement)
+                    result.append(cursor.fetchmany(2))
+                return result
+
+    try:
+        result = await asyncio.to_thread(read)
+        if any(len(rows) != 1 or len(rows[0]) != 3 for rows in result):
+            raise ValueError("Invalid analytics quality result")
+        events, clicks = result
+        event_total, latest_event, legacy_total = events[0]
+        click_total, latest_click, recipe_opens = clicks[0]
+        event_total, click_total = int(event_total), int(click_total)
+        legacy_total = int(legacy_total or 0)
+        recipe_opens = int(recipe_opens or 0)
+        if not (0 <= legacy_total <= event_total and 0 <= recipe_opens <= click_total):
+            raise ValueError("Invalid analytics quality counts")
+
+        def timestamp(value):
+            if value is None:
+                return None
+            # Timestamp values are interpreted under the explicit UTC SQL session.
+            if not hasattr(value, "isoformat"):
+                raise ValueError("Invalid warehouse timestamp")
+            return value.isoformat().replace("+00:00", "") + "Z"
+
+        return {
+            "days": days, "timezone": "UTC",
+            "window": "utc_calendar_days_including_today",
+            "profile_event_count": event_total,
+            "recipe_click_count": click_total,
+            "recipe_open_event_count": recipe_opens,
+            "legacy_or_missing_profile_id_events": legacy_total,
+            "latest_profile_event_utc": timestamp(latest_event),
+            "latest_recipe_click_utc": timestamp(latest_click),
+        }
+    except Exception:
+        logger.warning("Admin analytics quality query unavailable")
+        raise HTTPException(status_code=503, detail="Analytics temporarily unavailable") from None
