@@ -337,6 +337,137 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(failure.status_code, 503)
         self.assertNotIn("private Databricks", failure.text)
 
+    def test_daily_activity_requires_auth_bounded_window_and_config(self):
+        self.assertEqual(self.client.get("/api/admin/activity-trends").status_code, 401)
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+        for days in (0, 8, 31, 365):
+            self.assertEqual(self.client.get(
+                f"/api/admin/activity-trends?days={days}", headers=headers,
+            ).status_code, 422)
+        self.assertEqual(self.client.get(
+            "/api/admin/activity-trends?days=7", headers=headers,
+        ).status_code, 503)
+
+    def test_daily_activity_utc_zero_buckets_and_duplicate_events(self):
+        from datetime import date, timedelta
+
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+        events = ("profile_created", "viewed", "saved", "unsaved", "tried", "untried")
+        executed = []
+
+        class FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def execute(self, statement):
+                executed.append(statement)
+
+            def fetchmany(self, limit):
+                self_limit = limit // len(events)
+                start = date(2026, 11, 19)
+                rows = []
+                for index in range(self_limit):
+                    day = start + timedelta(days=index)
+                    for event in sorted(events):
+                        # Multiple events by same profile are not multiple profiles.
+                        count, distinct = (4, 2) if index == 1 and event == "viewed" else (0, 0)
+                        rows.append((day, event, count, distinct))
+                return rows
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def cursor(self):
+                return FakeCursor()
+
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(self.data_layer, "DB_HOST", "mock-host"):
+                with patch.object(self.data_layer, "DB_PATH", "/sql"):
+                    with patch.object(self.data_layer, "DB_TOKEN", "mock-token"):
+                        response = self.client.get("/api/admin/activity-trends?days=7", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["days"], 7)
+        self.assertEqual(result["timezone"], "UTC")
+        self.assertEqual(len(result["rows"]), 42)
+        self.assertEqual(result["events"], list(events))
+        self.assertEqual(result["rows"][0]["date"], "2026-11-19")
+        viewed = next(row for row in result["rows"]
+                      if row["date"] == "2026-11-20" and row["event_type"] == "viewed")
+        self.assertEqual(viewed["count"], 4)
+        self.assertEqual(viewed["distinct_profiles"], 2)
+        self.assertEqual(sum(row["count"] for row in result["rows"]), 4)
+        self.assertEqual(executed[0], "SET TIME ZONE 'UTC'")
+        self.assertIn("date_sub(current_date(), 6)", executed[1])
+        self.assertIn("date_add(current_date(), 1)", executed[1])
+        self.assertIn("CROSS JOIN event_names", executed[1])
+        self.assertIn("COUNT(DISTINCT", executed[1])
+        self.assertIn("default.app_user_events", executed[1])
+        self.assertNotIn("user_id", response.text)
+        self.assertNotIn("username", response.text)
+
+    def test_daily_activity_incomplete_matrix_and_databricks_error_are_503(self):
+        token = self.login()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        class FakeCursor:
+            fail = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def execute(self, statement):
+                if self.fail:
+                    raise RuntimeError("private Databricks credential")
+
+            def fetchmany(self, limit):
+                return []
+
+        cursor = FakeCursor()
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def cursor(self):
+                return cursor
+
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(self.data_layer, "DB_HOST", "mock-host"):
+                with patch.object(self.data_layer, "DB_PATH", "/sql"):
+                    with patch.object(self.data_layer, "DB_TOKEN", "mock-token"):
+                        no_rows = self.client.get("/api/admin/activity-trends?days=7", headers=headers)
+                        cursor.fail = True
+                        failure = self.client.get("/api/admin/activity-trends?days=7", headers=headers)
+
+        self.assertEqual(no_rows.status_code, 503)
+        self.assertEqual(failure.status_code, 503)
+        self.assertNotIn("private Databricks", failure.text)
+
     def test_databricks_table_is_allowlisted_and_absent_service_safe(self):
         token = self.login()
         headers = {"Authorization": f"Bearer {token}"}
