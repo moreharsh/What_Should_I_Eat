@@ -14,6 +14,7 @@ from fastapi import Header, HTTPException
 from data_layer import redis_client
 
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+PROFILE_REGISTRY_TTL_SECONDS = 90 * 24 * 60 * 60
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,24}$")
 
 
@@ -27,6 +28,11 @@ def create_profile(username: str) -> dict:
     token = secrets.token_urlsafe(32)
     redis_client.setex(
         f"profile:session:{token}", SESSION_TTL_SECONDS, json.dumps(identity)
+    )
+    # Admin-only listing index. This key is never consulted for authentication.
+    redis_client.setex(
+        f"profile:registry:v2:{identity['user_id']}",
+        PROFILE_REGISTRY_TTL_SECONDS, json.dumps(identity),
     )
     return {**identity, "token": token}
 
