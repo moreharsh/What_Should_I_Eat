@@ -7,7 +7,7 @@ This is not password or cross-device account authentication.
 import json
 import re
 import secrets
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import Header, HTTPException
 
