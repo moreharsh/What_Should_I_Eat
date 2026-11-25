@@ -297,7 +297,7 @@ function App() {
       <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm space-y-5">
         <h1 className="text-3xl font-extrabold text-indigo-700">What Should I Eat?</h1>
         <h2 className="text-xl font-semibold">Choose a username</h2>
-        <p className="text-sm text-slate-600">Enter a username to create or return to a recipe profile.</p>
+        <p className="text-sm text-slate-600">Choose a display name to start a private recipe session on this browser.</p>
         <form onSubmit={login} className="space-y-3">
           <label htmlFor="username" className="block text-sm font-semibold text-slate-700">Username</label>
           <input id="username" autoComplete="nickname" required minLength={3} maxLength={24}
@@ -307,10 +307,10 @@ function App() {
           {loginError && <p role="alert" className="text-sm text-red-600">{loginError}</p>}
           <button type="submit" disabled={loggingIn}
             className="w-full rounded-xl bg-indigo-600 p-3 font-semibold text-white disabled:opacity-60">
-            {loggingIn ? 'Creating profile...' : 'Continue'}
+            {loggingIn ? 'Creating profile...' : 'Start session'}
           </button>
         </form>
-        <p className="text-xs text-amber-800">Demo only: usernames have no passwords. Anyone who enters the same username can see its saved and tried recipes, including on another device. Don't store sensitive information.</p>
+        <p className="text-xs text-amber-800">Private to this browser session: your username is only a display name. Another person entering the same name gets separate history. Keep this browser's session to return; signing out, token expiry, or clearing browser storage means your earlier recipes cannot be recovered by username. This is not a cross-device account.</p>
       </div>
     </div>
   );
