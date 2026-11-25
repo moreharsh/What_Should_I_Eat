@@ -8,3 +8,4 @@ httpx
 pyarrow
 redis
 databricks-sql-connector
+argon2-cffi
