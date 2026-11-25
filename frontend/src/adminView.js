@@ -53,6 +53,35 @@ export function validateAdminResponse(tab, data) {
     }
     return data;
   }
+  if (tab === 'engagement') {
+    const events = ['viewed', 'saved', 'unsaved', 'tried', 'untried'];
+    const validCount = number => Number.isSafeInteger(number) && number >= 0;
+    const validRatio = value => value === null ||
+      (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+    if (!data || ![7, 30, 90].includes(data.days) || data.timezone !== 'UTC' ||
+        data.metric !== 'logged_action_events' ||
+        data.distinct_metric !== 'distinct_profile_uuids_per_action' ||
+        !Array.isArray(data.rows) || data.rows.length !== events.length ||
+        data.rows.some((row, index) => row.event_type !== events[index] ||
+          !validCount(row.count) || !validCount(row.distinct_profiles) ||
+          row.distinct_profiles > row.count)) {
+      throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+    }
+    const counts = Object.fromEntries(data.rows.map(row => [row.event_type, row.count]));
+    const summary = data.summary;
+    const ratio = value => counts.viewed ? Math.round(value / counts.viewed * 10000) / 100 : null;
+    if (!summary || summary.ratio_denominator_event !== 'viewed' ||
+        summary.ratio_denominator_count !== counts.viewed ||
+        !validRatio(summary.save_to_view_action_percent) ||
+        !validRatio(summary.tried_to_view_action_percent) ||
+        summary.save_to_view_action_percent !== ratio(counts.saved) ||
+        summary.tried_to_view_action_percent !== ratio(counts.tried) ||
+        summary.net_save_actions !== counts.saved - counts.unsaved ||
+        summary.net_tried_actions !== counts.tried - counts.untried) {
+      throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
+    }
+    return data;
+  }
   const field = tab === 'users' ? 'users' : tab === 'redis' ? 'keys' : tab === 'databricks' ? 'rows' : null;
   if (!field || !data || !Array.isArray(data[field])) {
     throw new Error('The admin API returned an unexpected response. Please refresh or check Render logs.');
@@ -61,7 +90,7 @@ export function validateAdminResponse(tab, data) {
 }
 
 export function visibleAdminRecords(records, tab, source) {
-  if (!records || records.tab !== tab || ((tab === 'databricks' || tab === 'popularity' || tab === 'activity') && records.source !== source)) {
+  if (!records || records.tab !== tab || ((tab === 'databricks' || tab === 'popularity' || tab === 'activity' || tab === 'engagement') && records.source !== source)) {
     return null;
   }
   return records.data;
