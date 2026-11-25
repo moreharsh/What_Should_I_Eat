@@ -10,7 +10,7 @@ A full-stack recipe discovery application. Pick a cuisine and dietary preference
 
 **Admin UI:** https://what-should-i-eat-mu.vercel.app/admin
 
-> **Anonymous session model:** Usernames are display names, not login credentials. Each new session receives an independent UUID and secret bearer token, so entering another person's username cannot open their history. Existing browser tokens continue until expiration or logout. This is not a password-protected or recoverable cross-device account; losing the token means losing access to that session's prior history. Avoid storing sensitive data.
+> **Registered accounts and temporary sessions:** Registered users can sign in with a password and restore their existing recipe history across devices. Anonymous demo profiles remain isolated. See [persistent account authentication](backend/ACCOUNT_AUTH.md) for migration and one-time recovery code requirements.\n\n**Anonymous session model:** Usernames are display names, not login credentials. Each new session receives an independent UUID and secret bearer token, so entering another person's username cannot open their history. Existing browser tokens continue until expiration or logout. This is not a password-protected or recoverable cross-device account; losing the token means losing access to that session's prior history. Avoid storing sensitive data.
 
 ## How it works
 
@@ -158,7 +158,7 @@ Content-Type: application/json
 {"username":"home_chef"}
 ```
 
-Returns `user_id`, `username` and `token`. Usernames accept 3–24 letters, digits or underscores. `GET /api/session` checks the current bearer token; `DELETE /api/session` revokes it. Creating a new session always creates a new UUID, even when the display name already exists. A valid bearer token is required to resume an existing session; a username alone cannot recover it. Browser local storage holds the token, and the Redis session expires after 30 days. Logging out or clearing storage prevents recovery of the previous session; users can still choose the same display name for a new, empty profile.
+Returns `user_id`, `username` and `token` for a temporary anonymous profile. Registered accounts instead use `POST /api/auth/register` and `POST /api/auth/login` with `username` and `password` (12+ characters). Registration displays a one-time recovery code; `POST /api/auth/recover` requires the saved code to rotate a forgotten password. Usernames accept 3–24 letters, digits or underscores. `GET /api/session` checks the current bearer token; `DELETE /api/session` revokes it. Creating a new session always creates a new UUID, even when the display name already exists. A valid bearer token is required to resume an existing session; a username alone cannot recover it. Browser local storage holds the token, and the Redis session expires after 30 days. Logging out or clearing storage prevents recovery of the previous session; users can still choose the same display name for a new, empty profile.
 
 ### Generate five menu suggestions (no session required)
 
