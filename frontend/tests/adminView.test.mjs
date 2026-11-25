@@ -96,3 +96,32 @@ test('popularity payload validates windows, bounded counts and tab isolation', (
     null,
   ]) assert.throws(() => validateAdminResponse('popularity', bad), /unexpected response/);
 });
+
+
+test('daily activity validates zero-filled dates, counts and tab-window isolation', () => {
+  const events = ['profile_created', 'viewed', 'saved', 'unsaved', 'tried', 'untried'];
+  const dates = ['2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21',
+    '2026-11-22', '2026-11-23', '2026-11-24'];
+  const rows = dates.flatMap(date => events.map(event_type => ({
+    date, event_type, count: date === '2026-11-24' && event_type === 'viewed' ? 4 : 0,
+    distinct_profiles: date === '2026-11-24' && event_type === 'viewed' ? 2 : 0,
+  })));
+  const data = {
+    days: 7, timezone: 'UTC', events, rows,
+    metric: 'logged_event_count', distinct_metric: 'daily_distinct_profile_uuids',
+  };
+  assert.deepEqual(validateAdminResponse('activity', data), data);
+  const previous = { tab: 'activity', source: '7', data };
+  assert.equal(visibleAdminRecords(previous, 'activity', '30'), null);
+  assert.equal(visibleAdminRecords(previous, 'popularity', '7'), null);
+  assert.deepEqual(visibleAdminRecords(previous, 'activity', '7'), data);
+  for (const bad of [
+    { ...data, days: 8 },
+    { ...data, rows: rows.slice(1) },
+    { ...data, rows: [...rows.slice(1), rows[1]] },
+    { ...data, rows: rows.map((r, i) => i === 0 ? { ...r, count: -1 } : r) },
+    { ...data, rows: rows.map((r, i) => i === 0 ? { ...r, count: 0, distinct_profiles: 1 } : r) },
+    { ...data, timezone: 'Eastern' },
+    { ...data, events: events.slice(1) },
+  ]) assert.throws(() => validateAdminResponse('activity', bad), /unexpected response/);
+});

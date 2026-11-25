@@ -318,3 +318,102 @@ async def recipe_popularity(days: int = 30, admin=Depends(require_admin)):
         "cuisine_metric": "recipe_view_events",
         "limit": POPULARITY_LIMIT,
     }
+
+
+# UTC calendar-day activity trends. Exact 7/30/90 date ranges include today
+# and N-1 previous UTC dates; they are distinct from rolling-hour popularity.
+ACTIVITY_EVENTS = ("profile_created", "viewed", "saved", "unsaved", "tried", "untried")
+UUID_SQL_PATTERN = (
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    "[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+@router.get("/activity-trends")
+async def daily_activity_trends(days: int = 30, admin=Depends(require_admin)):
+    """Return a zero-filled UTC date × event matrix, without identities.
+
+    SQL session timezone is explicitly UTC, not the warehouse default.
+    Event counts include repeated actions; distinct UUIDs only count logged
+    profile identifiers for each day/event (not verified unique people).
+    """
+    if days not in ANALYTICS_WINDOWS:
+        raise HTTPException(status_code=422, detail="Unsupported analytics window")
+    if not all([data_layer.DB_HOST, data_layer.DB_PATH, data_layer.DB_TOKEN]):
+        raise HTTPException(status_code=503, detail="Databricks is not configured")
+
+    # Date offsets and event names are server-owned allowlists, never client SQL.
+    events_sql = ", ".join(f"'{name}'" for name in ACTIVITY_EVENTS)
+    statement = f"""
+        WITH calendar AS (
+            SELECT explode(sequence(date_sub(current_date(), {days - 1}),
+                                   current_date(), interval 1 day)) AS activity_date
+        ), event_names AS (
+            SELECT explode(array({events_sql})) AS event_type
+        ), grouped AS (
+            SELECT CAST(event_at AS DATE) AS activity_date,
+                   event_type,
+                   COUNT(*) AS event_count,
+                   COUNT(DISTINCT CASE WHEN user_id RLIKE '{UUID_SQL_PATTERN}'
+                                       THEN lower(user_id) ELSE NULL END)
+                       AS distinct_profiles
+            FROM default.app_user_events
+            WHERE event_at >= CAST(date_sub(current_date(), {days - 1}) AS TIMESTAMP)
+              AND event_at < CAST(date_add(current_date(), 1) AS TIMESTAMP)
+              AND event_type IN ({events_sql})
+            GROUP BY CAST(event_at AS DATE), event_type
+        )
+        SELECT calendar.activity_date, event_names.event_type,
+               COALESCE(grouped.event_count, 0) AS event_count,
+               COALESCE(grouped.distinct_profiles, 0) AS distinct_profiles
+        FROM calendar CROSS JOIN event_names
+        LEFT JOIN grouped
+          ON calendar.activity_date = grouped.activity_date
+         AND event_names.event_type = grouped.event_type
+        ORDER BY calendar.activity_date ASC, event_names.event_type ASC
+    """
+
+    def read():
+        from databricks import sql
+        with sql.connect(
+            server_hostname=data_layer.DB_HOST, http_path=data_layer.DB_PATH,
+            access_token=data_layer.DB_TOKEN
+        ) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET TIME ZONE 'UTC'")
+                cursor.execute(statement)
+                return cursor.fetchmany(days * len(ACTIVITY_EVENTS) + 1)
+
+    try:
+        raw_rows = await asyncio.to_thread(read)
+        expected = days * len(ACTIVITY_EVENTS)
+        if len(raw_rows) != expected:
+            raise ValueError("Incomplete daily activity matrix")
+        records = []
+        seen = set()
+        for date_value, event_type, event_count, distinct_profiles in raw_rows:
+            date_label = date_value.isoformat() if hasattr(date_value, "isoformat") else str(date_value)
+            # Verify the response shape before sending metrics to the browser.
+            if (not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_label)
+                    or event_type not in ACTIVITY_EVENTS
+                    or (date_label, event_type) in seen):
+                raise ValueError("Invalid daily activity bucket")
+            event_count, distinct_profiles = int(event_count), int(distinct_profiles)
+            if not (0 <= distinct_profiles <= event_count):
+                raise ValueError("Invalid activity counts")
+            seen.add((date_label, event_type))
+            records.append({
+                "date": date_label, "event_type": event_type,
+                "count": event_count, "distinct_profiles": distinct_profiles,
+            })
+    except Exception:
+        logger.warning("Admin daily activity query unavailable")
+        raise HTTPException(status_code=503, detail="Analytics temporarily unavailable") from None
+
+    return {
+        "days": days, "timezone": "UTC",
+        "events": list(ACTIVITY_EVENTS),
+        "rows": records,
+        "metric": "logged_event_count",
+        "distinct_metric": "daily_distinct_profile_uuids",
+    }

@@ -69,6 +69,30 @@ function PopularityBars({ title, caption, rows }) {
   </section>;
 }
 
+const EVENT_NAMES = ['profile_created', 'viewed', 'saved', 'unsaved', 'tried', 'untried'];
+
+function DailyActivityBars({ title, rows, countKey }) {
+  const maximum = Math.max(1, ...rows.map(row => row[countKey]));
+  return <section className="min-w-0 space-y-3 rounded-xl border border-slate-200 p-4" aria-label={title}>
+    <h3 className="font-bold text-slate-800">{title}</h3>
+    <p className="text-xs text-slate-500">UTC calendar days. Each column represents one day; details are available in the table.</p>
+    <div className="overflow-x-auto">
+      <div className="flex h-40 min-w-full items-end gap-1 border-b border-slate-300 pb-1"
+        style={{ width: `${Math.max(320, rows.length * 12)}px` }} aria-hidden="true">
+        {rows.map(row => <div key={row.date} className="group relative flex h-full min-w-0 flex-1 items-end"
+          title={`${row.date}: ${row[countKey]} ${countKey === 'count' ? 'events' : 'profiles'}`}>
+          <div className="w-full rounded-t bg-indigo-500"
+            style={{ height: `${row[countKey] === 0 ? 0 : Math.max(2, 100 * row[countKey] / maximum)}%` }}/>
+        </div>)}
+      </div>
+      <div className="mt-1 flex justify-between text-[11px] text-slate-500">
+        <span>{rows[0]?.date}</span><span>{rows[rows.length - 1]?.date}</span>
+      </div>
+    </div>
+    <p className="text-xs text-slate-500">Maximum daily value: {maximum === 1 && rows.every(row => row[countKey] === 0) ? 0 : maximum}</p>
+  </section>;
+}
+
 function RecipeList({ label, items = [] }) {
   return <div className="space-y-2">
     <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{label} ({items.length})</h4>
@@ -90,6 +114,7 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('users');
   const [source, setSource] = useState('events');
   const [days, setDays] = useState(30);
+  const [activityEvent, setActivityEvent] = useState('viewed');
   const [records, setRecords] = useState(null);
   const requestIdRef = useRef(0);
   const [loading, setLoading] = useState(false);
@@ -147,13 +172,14 @@ export default function AdminDashboard() {
     setError('');
     setRecords(null);
     try {
-      const path = activeTab === 'popularity' ? `/popularity?days=${days}`
+      const path = activeTab === 'activity' ? `/activity-trends?days=${days}`
+        : activeTab === 'popularity' ? `/popularity?days=${days}`
         : activeTab === 'databricks' ? `/databricks?table=${source}`
         : activeTab === 'maintenance' ? '/redis-heartbeat' : `/${activeTab}`;
       const response = await adminRequest(path, { token });
       if (requestId !== requestIdRef.current) return;
       const data = validateAdminResponse(activeTab, response);
-      setRecords({ tab: activeTab, source: activeTab === 'popularity' ? String(days) : source, data });
+      setRecords({ tab: activeTab, source: (activeTab === 'popularity' || activeTab === 'activity') ? String(days) : source, data });
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unable to read admin data.';
@@ -179,7 +205,7 @@ export default function AdminDashboard() {
 
   // Tab buttons update immediately, before effects can clear the previous
   // response. Never try to render that previous response under a new tab.
-  const visibleRecords = visibleAdminRecords(records, activeTab, activeTab === 'popularity' ? String(days) : source);
+  const visibleRecords = visibleAdminRecords(records, activeTab, (activeTab === 'popularity' || activeTab === 'activity') ? String(days) : source);
 
   if (!verified) {
     return <div className="mx-auto max-w-md px-4 py-16">
@@ -211,6 +237,7 @@ export default function AdminDashboard() {
     { id: 'users', label: 'Users & selections', icon: Users },
     { id: 'redis', label: 'Redis inspector', icon: HardDrive },
     { id: 'popularity', label: 'Recipe popularity', icon: BarChart3 },
+    { id: 'activity', label: 'Daily activity', icon: Activity },
     { id: 'maintenance', label: 'Redis maintenance', icon: Clock3 },
     { id: 'databricks', label: 'Databricks events', icon: Database },
   ];
@@ -242,13 +269,20 @@ export default function AdminDashboard() {
           <option value="events">Profile activity (app_user_events)</option>
           <option value="clicks">Recipe interactions (user_clicks)</option>
         </select>}
-        {activeTab === 'popularity' && <label className="flex items-center gap-2 text-sm text-slate-600">
+        {(activeTab === 'popularity' || activeTab === 'activity') && <label className="flex items-center gap-2 text-sm text-slate-600">
           Window
-          <select aria-label="Popularity time window" value={days} onChange={e => setDays(Number(e.target.value))}
+          <select aria-label="Analytics time window" value={days} onChange={e => setDays(Number(e.target.value))}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
             <option value={7}>7 days</option>
             <option value={30}>30 days</option>
             <option value={90}>90 days</option>
+          </select>
+        </label>}
+        {activeTab === 'activity' && <label className="flex items-center gap-2 text-sm text-slate-600">
+          Event
+          <select aria-label="Activity event type" value={activityEvent} onChange={e => setActivityEvent(e.target.value)}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+            {EVENT_NAMES.map(event => <option key={event} value={event}>{event.replaceAll('_', ' ')}</option>)}
           </select>
         </label>}
         <button onClick={loadTab} disabled={loading} className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50">
@@ -305,6 +339,27 @@ export default function AdminDashboard() {
           <PopularityBars title="Most viewed cuisines" caption="Viewed events from app_user_events; not saved or tried preferences."
             rows={visibleRecords.top_cuisines}/>
         </div>
+      </>}
+      {!loading && visibleRecords && activeTab === 'activity' && <>
+        <p className="text-xs text-slate-500">
+          Last {visibleRecords.days} UTC calendar days, including today · Event counts include repeated actions.
+          Distinct profiles are UUIDs per day and event, not authenticated people or unique users across the period.
+          Missing dates are shown as zero; a Databricks failure is shown as an error, never a zero.
+        </p>
+        {(() => {
+          const rows = visibleRecords.rows.filter(row => row.event_type === activityEvent)
+            .sort((a, b) => a.date.localeCompare(b.date));
+          const total = rows.reduce((sum, row) => sum + row.count, 0);
+          return <>
+            <p className="text-sm font-medium text-slate-700">{total.toLocaleString('en-US')} {activityEvent.replaceAll('_', ' ')} events in this window</p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <DailyActivityBars title="Daily event volume" rows={rows} countKey="count"/>
+              <DailyActivityBars title="Daily distinct profile UUIDs" rows={rows} countKey="distinct_profiles"/>
+            </div>
+            <h3 className="text-sm font-semibold text-slate-700">Daily activity data · {activityEvent.replaceAll('_', ' ')}</h3>
+            <Table rows={rows} columns={['date', 'event_type', 'count', 'distinct_profiles']}/>
+          </>;
+        })()}
       </>}
       {!loading && visibleRecords && activeTab === 'databricks' && <>
         <p className="text-xs text-slate-500">Most recent {visibleRecords.limit} entries, with sensitive recipe payloads and credentials excluded.</p>
