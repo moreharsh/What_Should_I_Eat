@@ -7,13 +7,14 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SESSION_KEY = 'recipe_admin_session';
 
 /** @param {string} path
- * @param {{token?: string, method?: string, body?: object}} [options]
+ * @param {{token?: string, method?: string, body?: object, signal?: AbortSignal}} [options]
  */
-async function adminRequest(path, { token = '', method = 'GET', body } = {}) {
+async function adminRequest(path, { token = '', method = 'GET', body, signal } = {}) {
   let response;
   try {
     response = await fetch(`${API}/api/admin${path}`, {
       method,
+      ...(signal ? { signal } : {}),
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -133,6 +134,7 @@ export default function AdminDashboard() {
   const [activityEvent, setActivityEvent] = useState('viewed');
   const [records, setRecords] = useState(null);
   const requestIdRef = useRef(0);
+  const analyticsAbortRef = useRef(null);
   const qualityCacheRef = useRef(new Map());
   const [quality, setQuality] = useState(null);
   const [qualityError, setQualityError] = useState('');
@@ -141,6 +143,7 @@ export default function AdminDashboard() {
 
   const clearSession = useCallback(() => {
     requestIdRef.current += 1;
+    analyticsAbortRef.current?.abort();
     sessionStorage.removeItem(SESSION_KEY);
     setToken('');
     setVerified(false);
@@ -190,6 +193,9 @@ export default function AdminDashboard() {
   const loadTab = useCallback(async (force = false) => {
     if (!token || !verified) return;
     const requestId = ++requestIdRef.current;
+    analyticsAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyticsAbortRef.current = controller;
     setLoading(true);
     setError('');
     setRecords(null);
@@ -201,7 +207,7 @@ export default function AdminDashboard() {
         : activeTab === 'popularity' ? `/popularity?days=${days}`
         : activeTab === 'databricks' ? `/databricks?table=${source}`
         : activeTab === 'maintenance' ? '/redis-heartbeat' : `/${activeTab}`;
-      const response = await adminRequest(path, { token });
+      const response = await adminRequest(path, { token, signal: controller.signal });
       if (requestId !== requestIdRef.current) return;
       const data = validateAdminResponse(activeTab, response);
       setRecords({ tab: activeTab, source: (activeTab === 'popularity' || activeTab === 'activity' || activeTab === 'engagement') ? String(days) : source, data });
@@ -211,7 +217,7 @@ export default function AdminDashboard() {
           setQuality(cached);
         } else {
           try {
-            const metadata = validateAnalyticsQuality(await adminRequest(`/analytics-quality?days=${days}`, { token }));
+            const metadata = validateAnalyticsQuality(await adminRequest(`/analytics-quality?days=${days}`, { token, signal: controller.signal }));
             if (requestId !== requestIdRef.current) return;
             const fresh = { ...metadata, fetchedAt: Date.now() };
             qualityCacheRef.current.set(days, fresh);
@@ -242,6 +248,7 @@ export default function AdminDashboard() {
     return () => {
       active = false;
       requestIdRef.current += 1;
+      analyticsAbortRef.current?.abort();
     };
   }, [loadTab]);
 
