@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { redisHeartbeatRows, validateAdminResponse, visibleAdminRecords } from '../src/adminView.js';
+import { redisHeartbeatRows, validateAdminResponse, validateAnalyticsQuality, visibleAdminRecords } from '../src/adminView.js';
 
 const users = { users: [{ username: 'chef' }], limit: 100 };
 const redis = { keys: [{ key: 'recipe:v2:example' }], limit: 100 };
@@ -178,4 +178,41 @@ test('engagement window selector and response visibility are wired in dashboard'
   const source = readFileSync(new URL('../src/AdminDashboard.jsx', import.meta.url), 'utf8');
   assert.match(source, /const visibleRecords = visibleAdminRecords\(records, activeTab, \(activeTab === 'popularity' \|\| activeTab === 'activity' \|\| activeTab === 'engagement'\)/);
   assert.match(source, /\{\(activeTab === 'popularity' \|\| activeTab === 'activity' \|\| activeTab === 'engagement'\) && <label/);
+});
+
+test('analytics quality validates bounded event coverage, legacy UUID exclusions and null freshness', () => {
+  const data = {
+    days: 30, timezone: 'UTC', window: 'utc_calendar_days_including_today',
+    profile_event_count: 10, recipe_click_count: 8, recipe_open_event_count: 6,
+    legacy_or_missing_profile_id_events: 3,
+    latest_profile_event_utc: '2026-11-25T12:35:00Z',
+    latest_recipe_click_utc: '2026-11-25T12:30:00Z',
+  };
+  assert.deepEqual(validateAnalyticsQuality(data), data);
+  const empty = {
+    ...data, profile_event_count: 0, recipe_click_count: 0,
+    recipe_open_event_count: 0, legacy_or_missing_profile_id_events: 0,
+    latest_profile_event_utc: null, latest_recipe_click_utc: null,
+  };
+  assert.deepEqual(validateAnalyticsQuality(empty), empty);
+  for (const bad of [
+    null, { ...data, days: 8 }, { ...data, timezone: 'America/New_York' },
+    { ...data, profile_event_count: -1 },
+    { ...data, legacy_or_missing_profile_id_events: 11 },
+    { ...data, recipe_open_event_count: 9 },
+    { ...data, latest_profile_event_utc: 'not-a-time' },
+    { ...data, latest_recipe_click_utc: '2026-11-25' },
+    { ...data, window: 'rolling_hours' },
+  ]) assert.throws(() => validateAnalyticsQuality(bad), /unexpected response/);
+});
+
+test('analytics tabs share time window and show quality state safely', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/AdminDashboard.jsx', import.meta.url), 'utf8');
+  assert.match(source, /activeTab === 'popularity' \|\| activeTab === 'activity' \|\| activeTab === 'engagement'/);
+  assert.match(source, /analytics-quality\?days=/);
+  assert.match(source, /qualityCacheRef\.current\.get\(days\)/);
+  assert.match(source, /requestId !== requestIdRef\.current/);
+  assert.match(source, /Data freshness unavailable/);
+  assert.match(source, /latest_profile_event_utc/);
 });
