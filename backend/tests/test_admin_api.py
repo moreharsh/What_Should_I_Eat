@@ -468,6 +468,106 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(failure.status_code, 503)
         self.assertNotIn("private Databricks", failure.text)
 
+    def test_engagement_requires_auth_supported_windows_and_credentials(self):
+        self.assertEqual(self.client.get("/api/admin/engagement").status_code, 401)
+        headers = {"Authorization": f"Bearer {self.login()}"}
+        for days in (0, 8, 31, 91):
+            self.assertEqual(self.client.get(
+                f"/api/admin/engagement?days={days}", headers=headers,
+            ).status_code, 422)
+        self.assertEqual(self.client.get("/api/admin/engagement?days=7", headers=headers).status_code, 503)
+
+    def test_engagement_repeated_actions_undo_and_undefined_denominator(self):
+        headers = {"Authorization": f"Bearer {self.login()}"}
+        executed = []
+        class FakeCursor:
+            events = [("viewed", 2, 1), ("saved", 3, 1),
+                      ("unsaved", 4, 1), ("tried", 1, 1), ("untried", 2, 1)]
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, statement):
+                executed.append(statement)
+            def fetchmany(self, limit):
+                return self.events
+        cursor = FakeCursor()
+        class FakeConnection:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def cursor(self):
+                return cursor
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(self.data_layer, "DB_HOST", "mock-host"):
+                with patch.object(self.data_layer, "DB_PATH", "/sql"):
+                    with patch.object(self.data_layer, "DB_TOKEN", "mock-token"):
+                        response = self.client.get("/api/admin/engagement?days=7", headers=headers)
+                        cursor.events = [("saved", 2, 1)]
+                        no_views = self.client.get("/api/admin/engagement?days=30", headers=headers)
+                        cursor.events = []
+                        empty = self.client.get("/api/admin/engagement?days=90", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["summary"]["save_to_view_action_percent"], 150.0)
+        self.assertEqual(result["summary"]["tried_to_view_action_percent"], 50.0)
+        self.assertEqual(result["summary"]["net_save_actions"], -1)
+        self.assertEqual(result["summary"]["net_tried_actions"], -1)
+        self.assertEqual(result["rows"][1]["distinct_profiles"], 1)
+        self.assertEqual(executed[0], "SET TIME ZONE 'UTC'")
+        self.assertIn("COUNT(DISTINCT", executed[1])
+        self.assertIn("date_sub(current_date(), 6)", executed[1])
+        self.assertIn("date_add(current_date(), 1)", executed[1])
+        self.assertNotIn("username", response.text)
+        self.assertNotIn("user_id", response.text)
+        self.assertEqual(no_views.status_code, 200)
+        self.assertIsNone(no_views.json()["summary"]["save_to_view_action_percent"])
+        self.assertEqual(no_views.json()["summary"]["net_save_actions"], 2)
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(sum(row["count"] for row in empty.json()["rows"]), 0)
+        self.assertIsNone(empty.json()["summary"]["tried_to_view_action_percent"])
+
+    def test_engagement_invalid_warehouse_results_and_failure_are_503(self):
+        headers = {"Authorization": f"Bearer {self.login()}"}
+        class FakeCursor:
+            rows = [("saved", 1, 2)]
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, statement):
+                if self.rows is None:
+                    raise RuntimeError("private secret")
+            def fetchmany(self, limit):
+                return self.rows
+        cursor = FakeCursor()
+        class FakeConnection:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def cursor(self):
+                return cursor
+        sql = types.ModuleType("databricks.sql")
+        sql.connect = lambda **kwargs: FakeConnection()
+        db = types.ModuleType("databricks")
+        db.sql = sql
+        with patch.dict(sys.modules, {"databricks": db, "databricks.sql": sql}):
+            with patch.object(self.data_layer, "DB_HOST", "mock-host"):
+                with patch.object(self.data_layer, "DB_PATH", "/sql"):
+                    with patch.object(self.data_layer, "DB_TOKEN", "mock-token"):
+                        invalid = self.client.get("/api/admin/engagement?days=7", headers=headers)
+                        cursor.rows = None
+                        unavailable = self.client.get("/api/admin/engagement?days=7", headers=headers)
+        self.assertEqual(invalid.status_code, 503)
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertNotIn("private secret", unavailable.text)
+
     def test_databricks_table_is_allowlisted_and_absent_service_safe(self):
         token = self.login()
         headers = {"Authorization": f"Bearer {token}"}

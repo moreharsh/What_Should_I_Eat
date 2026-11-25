@@ -417,3 +417,95 @@ async def daily_activity_trends(days: int = 30, admin=Depends(require_admin)):
         "metric": "logged_event_count",
         "distinct_metric": "daily_distinct_profile_uuids",
     }
+
+
+ENGAGEMENT_EVENTS = ("viewed", "saved", "unsaved", "tried", "untried")
+
+
+def _engagement_summary(rows):
+    """Turn fixed event aggregates into action ratios, never user conversion."""
+    counts = {item["event_type"]: item["count"] for item in rows}
+    views = counts["viewed"]
+    saves = counts["saved"]
+    tries = counts["tried"]
+    def ratio(numerator):
+        # Null is an undefined denominator, not a 0% action rate.
+        return round(100 * numerator / views, 2) if views else None
+
+    return {
+        "save_to_view_action_percent": ratio(saves),
+        "tried_to_view_action_percent": ratio(tries),
+        "ratio_denominator_event": "viewed",
+        "ratio_denominator_count": views,
+        "net_save_actions": saves - counts["unsaved"],
+        "net_tried_actions": tries - counts["untried"],
+    }
+
+
+@router.get("/engagement")
+async def recipe_engagement(days: int = 30, admin=Depends(require_admin)):
+    """UTC calendar-day window with fixed aggregate SELECT and no raw identity.
+
+    Repeated actions are counted. Undo events subtract from net *actions* only;
+    neither net actions nor the view denominator is a count of current
+    saved/tried recipes, distinct recipe views, cooking, or retained people.
+    """
+    if days not in ANALYTICS_WINDOWS:
+        raise HTTPException(status_code=422, detail="Unsupported analytics window")
+    if not all([data_layer.DB_HOST, data_layer.DB_PATH, data_layer.DB_TOKEN]):
+        raise HTTPException(status_code=503, detail="Databricks is not configured")
+
+    event_names = ", ".join(f"'{name}'" for name in ENGAGEMENT_EVENTS)
+    query = f"""
+        SELECT event_type, COUNT(*) AS event_count,
+               COUNT(DISTINCT CASE
+                   WHEN user_id RLIKE '{UUID_SQL_PATTERN}'
+                   THEN lower(user_id) ELSE NULL END) AS distinct_profiles
+        FROM default.app_user_events
+        WHERE event_at >= CAST(date_sub(current_date(), {days - 1}) AS TIMESTAMP)
+          AND event_at < CAST(date_add(current_date(), 1) AS TIMESTAMP)
+          AND event_type IN ({event_names})
+        GROUP BY event_type
+    """
+
+    def read():
+        from databricks import sql
+        with sql.connect(
+            server_hostname=data_layer.DB_HOST, http_path=data_layer.DB_PATH,
+            access_token=data_layer.DB_TOKEN,
+        ) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET TIME ZONE 'UTC'")
+                cursor.execute(query)
+                return cursor.fetchmany(len(ENGAGEMENT_EVENTS) + 1)
+
+    try:
+        raw = await asyncio.to_thread(read)
+        if len(raw) > len(ENGAGEMENT_EVENTS):
+            raise ValueError("Too many engagement groups")
+        by_event = {}
+        for event_type, count, distinct_profiles in raw:
+            if event_type not in ENGAGEMENT_EVENTS or event_type in by_event:
+                raise ValueError("Invalid engagement event")
+            count, distinct_profiles = int(count), int(distinct_profiles)
+            if not 0 <= distinct_profiles <= count:
+                raise ValueError("Invalid engagement aggregate")
+            by_event[event_type] = {
+                "event_type": event_type, "count": count,
+                "distinct_profiles": distinct_profiles,
+            }
+        rows = [by_event.get(event, {
+            "event_type": event, "count": 0, "distinct_profiles": 0,
+        }) for event in ENGAGEMENT_EVENTS]
+    except Exception:
+        logger.warning("Admin engagement query unavailable")
+        raise HTTPException(status_code=503, detail="Analytics temporarily unavailable") from None
+
+    return {
+        "days": days,
+        "timezone": "UTC",
+        "metric": "logged_action_events",
+        "distinct_metric": "distinct_profile_uuids_per_action",
+        "rows": rows,
+        "summary": _engagement_summary(rows),
+    }

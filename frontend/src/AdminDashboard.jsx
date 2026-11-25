@@ -93,6 +93,22 @@ function DailyActivityBars({ title, rows, countKey }) {
   </section>;
 }
 
+function EngagementBars({ rows, countKey, title }) {
+  const maximum = Math.max(1, ...rows.map(row => row[countKey]));
+  return <section aria-label={title} className="rounded-xl border border-slate-200 p-4 space-y-3">
+    <h3 className="font-semibold text-slate-800">{title}</h3>
+    <ol className="space-y-3">{rows.map(row => <li key={row.event_type}>
+      <div className="flex justify-between gap-2 text-sm">
+        <span className="capitalize text-slate-700">{row.event_type.replaceAll('_', ' ')}</span>
+        <span className="tabular-nums text-slate-700">{row[countKey].toLocaleString('en-US')}</span>
+      </div>
+      <div aria-hidden="true" className="mt-1 h-3 rounded-full bg-slate-100 overflow-hidden">
+        <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${100 * row[countKey] / maximum}%` }}/>
+      </div>
+    </li>)}</ol>
+  </section>;
+}
+
 function RecipeList({ label, items = [] }) {
   return <div className="space-y-2">
     <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{label} ({items.length})</h4>
@@ -172,14 +188,15 @@ export default function AdminDashboard() {
     setError('');
     setRecords(null);
     try {
-      const path = activeTab === 'activity' ? `/activity-trends?days=${days}`
+      const path = activeTab === 'engagement' ? `/engagement?days=${days}`
+        : activeTab === 'activity' ? `/activity-trends?days=${days}`
         : activeTab === 'popularity' ? `/popularity?days=${days}`
         : activeTab === 'databricks' ? `/databricks?table=${source}`
         : activeTab === 'maintenance' ? '/redis-heartbeat' : `/${activeTab}`;
       const response = await adminRequest(path, { token });
       if (requestId !== requestIdRef.current) return;
       const data = validateAdminResponse(activeTab, response);
-      setRecords({ tab: activeTab, source: (activeTab === 'popularity' || activeTab === 'activity') ? String(days) : source, data });
+      setRecords({ tab: activeTab, source: (activeTab === 'popularity' || activeTab === 'activity' || activeTab === 'engagement') ? String(days) : source, data });
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unable to read admin data.';
@@ -238,6 +255,7 @@ export default function AdminDashboard() {
     { id: 'redis', label: 'Redis inspector', icon: HardDrive },
     { id: 'popularity', label: 'Recipe popularity', icon: BarChart3 },
     { id: 'activity', label: 'Daily activity', icon: Activity },
+    { id: 'engagement', label: 'Recipe engagement', icon: BarChart3 },
     { id: 'maintenance', label: 'Redis maintenance', icon: Clock3 },
     { id: 'databricks', label: 'Databricks events', icon: Database },
   ];
@@ -360,6 +378,45 @@ export default function AdminDashboard() {
             <Table rows={rows} columns={['date', 'event_type', 'count', 'distinct_profiles']}/>
           </>;
         })()}
+      </>}
+      {!loading && visibleRecords && activeTab === 'engagement' && <>
+        <p className="text-xs text-slate-500">
+          Last {visibleRecords.days} UTC calendar days, including today. Each action is a logged event.
+          Repeated actions count separately. Tried means marked as tried, not verified cooking.
+          Distinct profiles refer to UUIDs observed per action, not unique people or retention.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 p-4">
+            <h3 className="text-sm font-semibold text-slate-700">Save-to-view action ratio</h3>
+            <p className="text-2xl font-bold tabular-nums text-slate-800">
+              {visibleRecords.summary.save_to_view_action_percent === null
+                ? 'N/A' : `${visibleRecords.summary.save_to_view_action_percent.toLocaleString('en-US')}%`}
+            </p>
+            <p className="text-xs text-slate-500">Save events ÷ view events ({visibleRecords.summary.ratio_denominator_count.toLocaleString('en-US')} views).
+              Not a per-user conversion rate; may exceed 100%. N/A means no recorded views.</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-4">
+            <h3 className="text-sm font-semibold text-slate-700">Tried-to-view action ratio</h3>
+            <p className="text-2xl font-bold tabular-nums text-slate-800">
+              {visibleRecords.summary.tried_to_view_action_percent === null
+                ? 'N/A' : `${visibleRecords.summary.tried_to_view_action_percent.toLocaleString('en-US')}%`}
+            </p>
+            <p className="text-xs text-slate-500">Tried events ÷ view events ({visibleRecords.summary.ratio_denominator_count.toLocaleString('en-US')} views).
+              Not a per-user conversion rate; may exceed 100%. N/A means no recorded views.</p>
+          </div>
+        </div>
+        <p className="text-sm font-medium text-slate-700">
+          Net save actions: <span className="tabular-nums">{visibleRecords.summary.net_save_actions.toLocaleString('en-US')}</span>
+          {' · '}Net tried actions: <span className="tabular-nums">{visibleRecords.summary.net_tried_actions.toLocaleString('en-US')}</span>
+        </p>
+        <p className="text-xs text-slate-500">Net actions = action events minus corresponding undo events.
+          These signed values are not current saved or tried recipe totals.</p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <EngagementBars title="Engagement action volume" rows={visibleRecords.rows} countKey="count"/>
+          <EngagementBars title="Distinct profile UUIDs per action" rows={visibleRecords.rows} countKey="distinct_profiles"/>
+        </div>
+        <h3 className="text-sm font-semibold text-slate-700">Engagement data</h3>
+        <Table rows={visibleRecords.rows} columns={['event_type', 'count', 'distinct_profiles']}/>
       </>}
       {!loading && visibleRecords && activeTab === 'databricks' && <>
         <p className="text-xs text-slate-500">Most recent {visibleRecords.limit} entries, with sensitive recipe payloads and credentials excluded.</p>

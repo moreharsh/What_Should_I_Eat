@@ -125,3 +125,50 @@ test('daily activity validates zero-filled dates, counts and tab-window isolatio
     { ...data, events: events.slice(1) },
   ]) assert.throws(() => validateAdminResponse('activity', bad), /unexpected response/);
 });
+
+test('engagement validates action rates, undo counts and stale views', () => {
+  const rows = [
+    { event_type: 'viewed', count: 2, distinct_profiles: 1 },
+    { event_type: 'saved', count: 3, distinct_profiles: 1 },
+    { event_type: 'unsaved', count: 4, distinct_profiles: 1 },
+    { event_type: 'tried', count: 1, distinct_profiles: 1 },
+    { event_type: 'untried', count: 2, distinct_profiles: 1 },
+  ];
+  const summary = {
+    save_to_view_action_percent: 150,
+    tried_to_view_action_percent: 50,
+    ratio_denominator_event: 'viewed',
+    ratio_denominator_count: 2,
+    net_save_actions: -1,
+    net_tried_actions: -1,
+  };
+  const data = {
+    days: 7, timezone: 'UTC', metric: 'logged_action_events',
+    distinct_metric: 'distinct_profile_uuids_per_action', rows, summary,
+  };
+  assert.deepEqual(validateAdminResponse('engagement', data), data);
+  const previous = { tab: 'engagement', source: '7', data };
+  assert.deepEqual(visibleAdminRecords(previous, 'engagement', '7'), data);
+  assert.equal(visibleAdminRecords(previous, 'engagement', '30'), null);
+  assert.equal(visibleAdminRecords(previous, 'activity', '7'), null);
+  const noViews = {
+    ...data,
+    rows: rows.map(row => row.event_type === 'viewed' ? { ...row, count: 0, distinct_profiles: 0 } : row),
+    summary: {
+      ...summary, ratio_denominator_count: 0,
+      save_to_view_action_percent: null, tried_to_view_action_percent: null,
+    },
+  };
+  assert.deepEqual(validateAdminResponse('engagement', noViews), noViews);
+  for (const bad of [
+    null,
+    { ...data, days: 8 },
+    { ...data, rows: rows.slice(1) },
+    { ...data, rows: [...rows.slice(0, 1), rows[0], ...rows.slice(2)] },
+    { ...data, rows: rows.map((r, i) => i === 0 ? { ...r, count: -1 } : r) },
+    { ...data, rows: rows.map((r, i) => i === 0 ? { ...r, distinct_profiles: 3 } : r) },
+    { ...data, summary: { ...summary, net_save_actions: 0 } },
+    { ...data, summary: { ...summary, save_to_view_action_percent: 100 } },
+    { ...noViews, summary: { ...noViews.summary, save_to_view_action_percent: 0 } },
+  ]) assert.throws(() => validateAdminResponse('engagement', bad), /unexpected response/);
+});
