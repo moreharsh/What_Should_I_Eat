@@ -25,7 +25,7 @@ export function validateAdminResponse(tab, data) {
   if (tab === 'activity') {
     const events = ['profile_created', 'viewed', 'saved', 'unsaved', 'tried', 'untried'];
     const validDate = value => typeof value === 'string' &&
-      /^\\d{4}-\\d{2}-\\d{2}$/.test(value) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(value) &&
       !Number.isNaN(Date.parse(value + 'T00:00:00Z'));
     if (!data || ![7, 30, 90].includes(data.days) || data.timezone !== 'UTC' ||
         data.metric !== 'logged_event_count' ||
