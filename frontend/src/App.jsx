@@ -443,14 +443,14 @@ function App() {
           What Should I Eat?
         </h1>
         <div className="ml-auto flex min-w-0 items-center gap-3">
-          <span className="max-w-32 truncate text-xs font-semibold text-slate-600" title={profile.account_type === 'guest' ? 'Temporary guest profile' : `@${profile.username}`}>
-            {profile.account_type === 'guest' ? 'Guest User' : `@${profile.username}`}</span>
+          <span className="max-w-32 truncate text-xs font-semibold text-slate-600" title={profile.username === 'Guest User' ? 'Temporary guest profile' : `@${profile.username}`}>
+            {profile.username === 'Guest User' ? 'Guest User' : `@${profile.username}`}</span>
           {profile.account_type !== 'registered' && <button type="button" onClick={() => {
             setUpgrading(true); setAuthMode('signup');
             setUsernameInput(profile.username === 'Guest User' ? '' : profile.username);
             setLoginError(null);
           }} className="rounded-lg border border-indigo-200 px-3 py-2 text-xs text-indigo-700">Keep my recipes</button>}
-          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">{profile.account_type === 'guest' ? 'Exit Guest' : 'Sign out'}</button>
+          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">{profile.username === 'Guest User' ? 'Exit Guest' : 'Sign out'}</button>
         </div>
       </header>
 
