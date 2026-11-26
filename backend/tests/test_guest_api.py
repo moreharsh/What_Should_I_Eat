@@ -109,15 +109,12 @@ class GuestSessionTests(unittest.TestCase):
         b = self.client.post("/api/guest-session").json()
         self.assertNotEqual(a["user_id"], b["user_id"])
 
-    def test_guest_creation_limited_and_bad_request_body_has_no_identity_input(self):
-        self.assertEqual(
-            self.client.post("/api/guest-session", json={"user_id": "target-id"}).status_code,
-            200,
-        )
-        # No user-supplied ID can be used; server always makes a UUID.
-        result = self.client.post("/api/guest-session", json={"username": "someone"})
-        self.assertNotEqual(result.json()["user_id"], "target-id")
-        for _ in range(self.guest.GUEST_CREATIONS_PER_15_MIN - 2):
+    def test_guest_creation_is_limited_and_identity_input_is_forbidden(self):
+        for body in ({"user_id": "target-id"}, {"username": "someone"}, {"password": "abc"}):
+            self.assertEqual(
+                self.client.post("/api/guest-session", json=body).status_code, 422,
+            )
+        for _ in range(self.guest.GUEST_CREATIONS_PER_15_MIN):
             self.assertEqual(self.client.post("/api/guest-session").status_code, 200)
         self.assertEqual(self.client.post("/api/guest-session").status_code, 429)
         self.assertTrue(any(k.startswith("guest:attempts:v1:") for k in self.redis.values))
