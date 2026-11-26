@@ -43,3 +43,31 @@ def start_guest_session(request: Request, background_tasks: BackgroundTasks):
         profile["username"], "profile_created",
     )
     return profile
+
+
+def limit_guest_generation(profile: dict, operation: str):
+    """Bound daily paid-model calls for Guest User without shared account IDs.
+
+    This is intentionally an additional per-session budget rather than a
+    substitute for global API abuse controls or reverse-proxy rate limits.
+    """
+    if profile.get("account_type") != "guest" or profile.get("username") != "Guest User":
+        return
+    allowed = {"menu": 40, "recipe": 20}
+    if operation not in allowed:
+        raise ValueError("Unknown guest operation")
+    key = f"guest:usage:v1:{profile['user_id']}:{operation}"
+    try:
+        calls = redis_client.incr(key)
+        if calls == 1:
+            redis_client.expire(key, 24 * 60 * 60)
+        if calls > allowed[operation]:
+            raise HTTPException(
+                status_code=429,
+                detail="Guest demo limit reached. Try again tomorrow or create an account.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Guest usage limit unavailable")
+        raise HTTPException(status_code=503, detail="Guest access temporarily unavailable") from None
