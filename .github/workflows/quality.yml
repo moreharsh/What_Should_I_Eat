@@ -80,7 +80,7 @@ jobs:
         with:
           node-version: '22'
       - name: Check source and documentation spelling
-        run: npx --yes cspell@8.19.4 --config cspell.json --no-progress "ReadMe.md" "CONTRIBUTING.md" "SECURITY.md" ".github/*.md" "frontend/README.md" "frontend/src/**/*.{js,jsx,css}" "backend/**/*.py"
+        run: npx --yes cspell@8.19.4 --config cspell.json --no-progress "ReadMe.md" "CONTRIBUTING.md" "SECURITY.md" ".github/*.md" "frontend/README.md" "backend/**/*.md" "frontend/src/**/*.{js,jsx,css}" "backend/**/*.py"
 
   hygiene:
     name: Git whitespace and conflict markers
