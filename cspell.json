@@ -82,6 +82,8 @@
     "compileall",
     "unlinted",
     "venv",
-    "RLIKE"
+    "RLIKE",
+    "cffi",
+    "urlsafe"
   ]
 }

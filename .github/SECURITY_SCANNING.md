@@ -1,8 +1,7 @@
 # Dependency security scan policy
 
 `.github/workflows/dependency-security.yml` runs on pull requests, pushes to
-`main`, a weekly schedule and manual dispatch. It is intentionally separate
-from the existing five protected checks (their exact names remain unchanged).
+`main`, a weekly schedule and manual dispatch. It is separate from the five quality/dietary checks, but **both dependency scan jobs are now required** by the active `main-require-all-ci` ruleset (verified November 25, 2026).
 
 ## What it checks
 
@@ -34,11 +33,9 @@ from the existing five protected checks (their exact names remain unchanged).
 
 ## Protected branches
 
-After observing a successful first run, repository admins should add
+The active repository ruleset **already requires** both
 `Frontend dependency vulnerability scan` and
-`Backend dependency vulnerability scan` to the required checks list.
-Do not enable them until initial package findings are reviewed, otherwise
-they may block merges. See `BRANCH_PROTECTION.md`.
+`Backend dependency vulnerability scan`. Any high/critical advisory may block merging; triage it as above rather than removing the check. See `BRANCH_PROTECTION.md` for the full list of seven required checks.
 
 ## Developer commands
 

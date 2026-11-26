@@ -18,7 +18,7 @@
 1. Review code changes and dependency advisories in the PR. For backend
    dependency changes, confirm Render uses Python 3.11 and installs
    `backend/requirements.txt` rather than `requirements.in`.
-2. Confirm all five existing CI checks and both dependency scans are green.
+2. Confirm all seven required PR checks are green (five quality/dietary checks and both dependency scans).
 3. Merge only after protected-main rules allow it.
 4. Check the Vercel and Render deployment dashboards for the expected commit.
 5. Inspect the smoke workflow run and confirm Render reports a successful
@@ -46,8 +46,8 @@
 The smoke job runs on `push: main` (not on untrusted PRs), with read-only
 permissions and no deployment credentials. Do NOT mark it as a required PR
 check; it intentionally does not run on PRs. `BRANCH_PROTECTION.md`
-documents the five existing PR checks and how an admin can add dependency
-security scan checks after they are consistently green.
+documents the seven currently required PR checks. The active ruleset
+requires both dependency security scans and strict branch freshness.
 
 To prove the currently deployed backend revision, add a trusted deployment
 integration with a commit SHA and provider callback in a separate, reviewed
