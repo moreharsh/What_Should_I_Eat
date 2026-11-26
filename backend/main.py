@@ -18,7 +18,7 @@ from recipe_cache import (
     user_saved_key, user_viewed_key,
 )
 from user_sessions import create_profile, get_profile, revoke_profile
-from guest_api import router as guest_router
+from guest_api import router as guest_router, limit_guest_generation
 from account_auth import router as account_router
 from admin_api import router as admin_router
 from maintenance_api import router as maintenance_router
@@ -192,7 +192,13 @@ async def update_recipe_action(
 
 
 @app.post("/api/menu")
-async def get_menu_options(request: MenuRequest):
+async def get_menu_options(
+    request: MenuRequest, authorization: str = Header(default=""),
+):
+    # The existing anonymous /api/menu contract remains supported, while
+    # guest sessions are subject to a specific bounded demo allowance.
+    if authorization:
+        limit_guest_generation(get_profile(authorization), "menu")
     try:
         initial_state = AgentState(
             cuisine=request.cuisine,
@@ -227,6 +233,7 @@ async def get_recipe_details(
     request: RecipeRequest, background_tasks: BackgroundTasks,
     profile=Depends(get_profile),
 ):
+    limit_guest_generation(profile, "recipe")
     try:
         # 🚀 1. STANDARDIZE THE CACHE KEY FIRST (Fixes Cache Miss Bug)
         cuisine_context = request.cuisine.strip().lower() if request.cuisine else "unassigned"
