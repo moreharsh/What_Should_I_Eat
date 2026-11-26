@@ -7,6 +7,7 @@ import hashlib
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from pydantic import BaseModel, ConfigDict
 
 from data_layer import redis_client, log_profile_event_to_databricks
 from user_sessions import create_guest_profile
@@ -19,8 +20,15 @@ GUEST_CREATIONS_PER_15_MIN = 10
 GUEST_WINDOW_SECONDS = 15 * 60
 
 
+class EmptyGuestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 @router.post("/api/guest-session")
-def start_guest_session(request: Request, background_tasks: BackgroundTasks):
+def start_guest_session(
+    request: Request, background_tasks: BackgroundTasks,
+    _body: EmptyGuestRequest | None = None,
+):
     # The source address is used only for throttling; never return/log it.
     client_address = request.client.host if request.client else "unknown"
     digest = hashlib.sha256(client_address.encode("utf-8")).hexdigest()
