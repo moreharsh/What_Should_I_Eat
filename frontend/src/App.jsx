@@ -80,6 +80,41 @@ function App() {
     }).finally(() => setCheckingSession(false));
   }, [API_BASE_URL]);
 
+  const continueAsGuest = async () => {
+    if (loggingIn) return;
+    setLoginError(null);
+    setLoggingIn(true);
+    try {
+      const data = await fetchJson('/api/guest-session', {}, true);
+      if (!data.token || !data.user_id || data.username !== 'Guest User' ||
+          data.account_type !== 'guest') {
+        throw new Error('Invalid guest session response');
+      }
+      menuFlowRef.current.controller?.abort();
+      recipeFlowRef.current.controller?.abort();
+      menuFlowRef.current = { id: menuFlowRef.current.id + 1, controller: null, pending: false, cuisine: '' };
+      recipeFlowRef.current = { id: recipeFlowRef.current.id + 1, controller: null };
+      localStorage.setItem('recipe_profile_token', data.token);
+      setToken(data.token);
+      setProfile({ username: 'Guest User', user_id: data.user_id, account_type: 'guest' });
+      setUsernameInput('');
+      setPasswordInput('');
+      setSelectedCuisine('');
+      setSelectedDiet([]);
+      setMenuOptions([]);
+      setTriedFavorites([]);
+      setSavedFavorites([]);
+      setViewedRecipes([]);
+      setRecipeDetails(null);
+      setMediaLinks(null);
+      setCurrentView('cuisines');
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Guest access is temporarily unavailable.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
   const login = async event => {
     event.preventDefault();
     if (loggingIn) return;
@@ -97,10 +132,8 @@ function App() {
         setAuthMode('signin');
         return;
       }
-      const path = authMode === 'signup' ? '/api/auth/register'
-        : authMode === 'temporary' ? '/api/session' : '/api/auth/login';
-      const payload = authMode === 'temporary' ? { username }
-        : { username, password: passwordInput };
+      const path = authMode === 'signup' ? '/api/auth/register' : '/api/auth/login';
+      const payload = { username, password: passwordInput };
       const data = await fetchJson(path, payload, !upgrading);
       if (!data.token || !data.username || !data.user_id) throw new Error('Invalid account response');
       menuFlowRef.current.controller?.abort();
@@ -343,12 +376,12 @@ function App() {
         <h1 className="text-2xl font-extrabold text-indigo-700">What Should I Eat?</h1>
         <h2 className="text-lg font-semibold">{upgrading ? 'Keep your existing recipes'
           : authMode === 'signin' ? 'Sign in' : authMode === 'signup' ? 'Create account'
-            : authMode === 'recover' ? 'Recover account' : 'Temporary demo profile'}</h2>
+            : 'Recover account'}</h2>
         <p className="text-sm text-slate-600">{upgrading
           ? 'Your active anonymous session can be upgraded without losing recipe history.'
           : 'Registered accounts restore saved, viewed and tried recipes after signing out.'}</p>
         {!upgrading && <div className="flex flex-wrap gap-2" role="group" aria-label="Sign-in options">
-          {[['signin','Sign in'],['signup','Sign up'],['temporary','Temporary demo']].map(([id,label]) =>
+          {[['signin','Sign in'],['signup','Sign up']].map(([id,label]) =>
             <button type="button" key={id} onClick={() => { setAuthMode(id); setLoginError(null); }}
               aria-pressed={authMode === id}
               className={`rounded-lg px-3 py-2 text-sm ${authMode === id ? 'bg-indigo-600 text-white' : 'border border-slate-300'}`}>{label}</button>)}
@@ -359,14 +392,14 @@ function App() {
             pattern="[A-Za-z0-9_]{3,24}" value={usernameInput}
             onChange={e => setUsernameInput(e.target.value)}
             className="w-full rounded-lg border border-slate-300 p-3"/>
-          {authMode !== 'temporary' && <>
+          <>
             <label htmlFor="password" className="block text-sm font-semibold">
               {authMode === 'recover' ? 'New password' : 'Password'}</label>
             <input id="password" type="password" required minLength={12} maxLength={256}
               autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
               value={passwordInput} onChange={e => setPasswordInput(e.target.value)}
               className="w-full rounded-lg border border-slate-300 p-3"/>
-          </>}
+          </>
           {authMode === 'recover' && <>
             <label htmlFor="recovery" className="block text-sm font-semibold">Saved recovery code</label>
             <input id="recovery" required autoComplete="off" minLength={32} maxLength={128}
@@ -378,15 +411,25 @@ function App() {
             className="w-full rounded-lg bg-indigo-600 p-3 font-semibold text-white disabled:opacity-50">
             {loggingIn ? 'Working…' : upgrading || authMode === 'signup' ? 'Create account'
               : authMode === 'recover' ? 'Reset password'
-                : authMode === 'temporary' ? 'Start temporary profile' : 'Sign in'}
+                : 'Sign in'}
           </button>
         </form>
+        {!upgrading && <>
+          <div className="flex items-center gap-3 text-xs text-slate-500" aria-hidden="true">
+            <span className="h-px flex-1 bg-slate-200"/>or<span className="h-px flex-1 bg-slate-200"/>
+          </div>
+          <button type="button" onClick={continueAsGuest} disabled={loggingIn}
+            className="w-full rounded-lg border-2 border-indigo-200 bg-indigo-50 p-3 font-semibold text-indigo-800 hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50">
+            {loggingIn ? 'Starting guest session…' : 'Continue as Guest'}
+          </button>
+          <p className="text-xs text-slate-600">No name, password, or registration required. Your name will appear as Guest User. Guest history is temporary and cannot be recovered after exit or session expiry.</p>
+        </>}
         {authMode === 'signin' && <button type="button" onClick={() => {
           setAuthMode('recover'); setLoginError(null);
         }} className="text-sm text-indigo-700 underline">Reset with a recovery code</button>}
         {upgrading && <button type="button" onClick={() => setUpgrading(false)}
           className="text-sm text-slate-700 underline">Back to recipes</button>}
-        <p className="text-xs text-slate-500">Temporary profiles cannot be restored after sign-out or expiry. Account recovery requires the one-time recovery code; email recovery is not available yet.</p>
+        <p className="text-xs text-slate-500">Guest profiles cannot be restored after exit or expiry. Account recovery requires the one-time recovery code; email recovery is not available yet.</p>
       </section>
     </main>
   );
@@ -400,12 +443,14 @@ function App() {
           What Should I Eat?
         </h1>
         <div className="ml-auto flex min-w-0 items-center gap-3">
-          <span className="max-w-32 truncate text-xs font-semibold text-slate-600" title={`@${profile.username}`}>@{profile.username}</span>
+          <span className="max-w-32 truncate text-xs font-semibold text-slate-600" title={profile.account_type === 'guest' ? 'Temporary guest profile' : `@${profile.username}`}>
+            {profile.account_type === 'guest' ? 'Guest User' : `@${profile.username}`}</span>
           {profile.account_type !== 'registered' && <button type="button" onClick={() => {
-            setUpgrading(true); setAuthMode('signup'); setUsernameInput(profile.username);
+            setUpgrading(true); setAuthMode('signup');
+            setUsernameInput(profile.username === 'Guest User' ? '' : profile.username);
             setLoginError(null);
           }} className="rounded-lg border border-indigo-200 px-3 py-2 text-xs text-indigo-700">Keep my recipes</button>}
-          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">Sign out</button>
+          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">{profile.account_type === 'guest' ? 'Exit Guest' : 'Sign out'}</button>
         </div>
       </header>
 
