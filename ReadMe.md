@@ -10,7 +10,7 @@ A full-stack recipe discovery application. Pick a cuisine and dietary preference
 
 **Admin UI:** https://what-should-i-eat-mu.vercel.app/admin
 
-> **Registered accounts and temporary sessions:** Registered users can sign in with a password and restore their existing recipe history across devices. Anonymous demo profiles remain isolated. See [persistent account authentication](backend/ACCOUNT_AUTH.md) for migration and one-time recovery code requirements.\n\n**Anonymous session model:** Usernames are display names, not login credentials. Each new session receives an independent UUID and secret bearer token, so entering another person's username cannot open their history. Existing browser tokens continue until expiration or logout. This is not a password-protected or recoverable cross-device account; losing the token means losing access to that session's prior history. Avoid storing sensitive data.
+> **Registered accounts and temporary sessions:** Registered users can sign in with a password and restore their existing recipe history across devices. Anyone can click **Continue as Guest** without entering a name or password; the UI displays **Guest User**, but every visitor has an independent UUID/session. Guest history is temporary and expires or becomes unrecoverable when that session is exited. See [Guest demo behavior](backend/GUEST_DEMO.md) and [persistent account authentication](backend/ACCOUNT_AUTH.md) for upgrade, recovery and migration details.\n\n**Anonymous session model:** Usernames are display names, not login credentials. Each new session receives an independent UUID and secret bearer token, so entering another person's username cannot open their history. Existing browser tokens continue until expiration or logout. This is not a password-protected or recoverable cross-device account; losing the token means losing access to that session's prior history. Avoid storing sensitive data.
 
 ## How it works
 
@@ -20,7 +20,9 @@ React / Vite frontend (Vercel)
     v
 FastAPI endpoints (Render) ---------------------> Redis
     |                                              | recipe:v2:* cache
-    | POST /api/menu                               | profile:registry:v2:* (admin-only index)
+    | POST /api/guest-session                      | profile:registry:v2:* (admin-only index)
+    |   -> unique temporary Guest User UUID        | profile:session:v2:* (hashed tokens)
+    | POST /api/menu
     |   -> Gemini Flash -> Gemini Flash Lite       | profile:session:* (TTL)
     |   -> five validated choices                  | user:* viewed/saved/tried sets
     |
@@ -139,7 +141,7 @@ Open the URL printed by Vite (normally `http://localhost:5173`). `VITE_API_URL` 
 
 ## API examples
 
-The application uses JSON request bodies. Except where noted, profile-specific endpoints require an `Authorization: Bearer <token>` header. Replace `<token>` with the `token` returned by `POST /api/session`.
+The application uses JSON request bodies. Except where noted, profile-specific endpoints require an `Authorization: Bearer <token>` header. Replace `<token>` with the token returned by account sign-in or `POST /api/guest-session` (no credentials required).
 
 ### Check health (no session)
 
