@@ -39,7 +39,7 @@ def create_profile(username: str) -> dict:
 
 
 def create_guest_profile() -> dict:
-    """Issue an isolated passwordless demo session with a fixed display name.
+    """Issue an isolated demo session without credentials with a fixed display name.
 
     The display name is never used as an identity or a lookup key. Use a
     hashed session-key namespace so Redis key inspection cannot leak tokens.
