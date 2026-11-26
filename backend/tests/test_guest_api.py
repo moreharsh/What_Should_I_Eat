@@ -1,6 +1,5 @@
 """Isolated one-click guest API tests with an in-memory Redis fake."""
 import importlib.util
-import json
 import sys
 import types
 import unittest
