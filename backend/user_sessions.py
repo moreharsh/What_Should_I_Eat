@@ -38,6 +38,32 @@ def create_profile(username: str) -> dict:
     return {**identity, "token": token}
 
 
+def create_guest_profile() -> dict:
+    """Issue an isolated passwordless demo session with a fixed display name.
+
+    The display name is never used as an identity or a lookup key. Use a
+    hashed session-key namespace so Redis key inspection cannot leak tokens.
+    """
+    identity = {
+        "user_id": str(uuid4()),
+        "username": "Guest User",
+        "account_type": "guest",
+    }
+    token = secrets.token_urlsafe(36)
+    token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    redis_client.setex(
+        "profile:session:v2:" + token_digest,
+        SESSION_TTL_SECONDS,
+        json.dumps(identity),
+    )
+    redis_client.setex(
+        f"profile:registry:v2:{identity['user_id']}",
+        PROFILE_REGISTRY_TTL_SECONDS,
+        json.dumps(identity),
+    )
+    return {**identity, "token": token}
+
+
 def get_profile(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Start a recipe session")
