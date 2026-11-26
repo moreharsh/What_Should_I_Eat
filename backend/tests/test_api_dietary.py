@@ -128,6 +128,7 @@ def load_app():
             raise HTTPException(status_code=401, detail="Invalid session")
         return json.loads(record)
     sessions.SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+    sessions.create_guest_profile = lambda: create_profile("Guest User")
     sessions.create_profile = create_profile
     sessions.get_profile = get_profile
     sessions.revoke_profile = lambda token: redis.delete(f"profile:session:{token}")

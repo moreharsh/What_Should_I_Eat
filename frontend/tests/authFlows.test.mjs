@@ -25,3 +25,18 @@ test('account switch clears credentials and UI state', () => {
   assert.match(app, /menuFlowRef\.current\.controller\?\.abort\(\)/);
   assert.match(app, /recipeFlowRef\.current\.controller\?\.abort\(\)/);
 });
+
+test('one-click guest creates isolated session without a name or password input', () => {
+  assert.match(app, /Continue as Guest/);
+  assert.match(app, /onClick={continueAsGuest}/);
+  assert.match(app, /fetchJson\('\/api\/guest-session', \{\}, true\)/);
+  assert.match(app, /data\.username !== 'Guest User'/);
+  assert.match(app, /data\.account_type !== 'guest'/);
+  assert.match(app, /setProfile\(\{ username: 'Guest User'/);
+  assert.match(app, /setUsernameInput\(''\)/);
+  assert.match(app, /setPasswordInput\(''\)/);
+  assert.match(app, /Exit Guest/);
+  assert.match(app, /setUsernameInput\(profile\.username === 'Guest User' \? '' : profile\.username\)/);
+  assert.doesNotMatch(app, /authMode === 'temporary'/);
+  assert.match(app, /Guest history is temporary/);
+});
